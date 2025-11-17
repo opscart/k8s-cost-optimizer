@@ -1,0 +1,46 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Go
+*.out
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Private/Local files
+.private/
+*.local
+.env
+.env.local
+
+# Test coverage
+*.coverprofile
+coverage.html
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+
+# Minikube
+.minikube/
+
+# Helm
+charts/*.tgz
+
+# Evaluation notes (keep in repo but gitignored)
+docs/evaluation/notes-*.md

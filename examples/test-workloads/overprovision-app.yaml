@@ -1,0 +1,36 @@
+---
+# Over-provisioned deployment - requests way more than it uses
+# This should be flagged by cost optimization tools
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: overprovision-app
+  namespace: cost-test
+  labels:
+    app: overprovision
+    team: backend
+    environment: test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: overprovision
+  template:
+    metadata:
+      labels:
+        app: overprovision
+        team: backend
+        environment: test
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        resources:
+          requests:
+            cpu: 1000m      # Requesting 1 CPU
+            memory: 2Gi     # Requesting 2GB
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        ports:
+        - containerPort: 80

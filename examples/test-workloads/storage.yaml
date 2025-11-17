@@ -1,0 +1,64 @@
+---
+# Unused PVC - should be flagged as waste
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: unused-storage
+  namespace: cost-test
+  labels:
+    purpose: testing-waste-detection
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+# Used PVC with deployment
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: used-storage
+  namespace: cost-test
+  labels:
+    purpose: testing-normal-usage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storage-app
+  namespace: cost-test
+  labels:
+    app: storage
+    team: data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: storage
+  template:
+    metadata:
+      labels:
+        app: storage
+        team: data
+    spec:
+      containers:
+      - name: app
+        image: nginx:alpine
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: used-storage
