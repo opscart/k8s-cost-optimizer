@@ -6,8 +6,10 @@ set -e
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-echo -e "${GREEN}==>${NC} Deploying test workloads..."
+echo -e "${GREEN}==>${NC} Creating namespace..."
+kubectl apply -f examples/test-workloads/namespace.yaml
 
+echo -e "${GREEN}==>${NC} Deploying test workloads..."
 kubectl apply -f examples/test-workloads/
 
 echo ""
