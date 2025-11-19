@@ -1,61 +1,105 @@
-# OpenCost Evaluation Checklist
+# OpenCost Technical Evaluation
 
-**Date:** [Fill in]  
-**Version:** [Fill in]  
-**Cluster:** minikube (3 nodes, 2CPU/2GB each)
+**Date:** November 19, 2025  
+**Version:** 1.118.0  
+**Environment:** Minikube 3-node cluster
 
 ## Installation
 
-- [ ] Installation time: _____ minutes
-- [ ] Number of commands: _____
-- [ ] Pods deployed: _____
-- [ ] Resource usage: _____
+**Time:** ~3 minutes  
+**Method:** Helm chart with Prometheus endpoint configuration  
+**Resources:** 1 pod (2 containers), minimal overhead
 
-## Features Available
+## Features Tested
 
-After 15 minutes, access http://localhost:9003
+### Cost Visibility ✓
+- Namespace-level cost breakdown
+- Multiple aggregation dimensions (Cluster, Node, Namespace, Deployment, Pod, Container)
+- Time-series visualization
+- Historical data (configurable window)
+- Cost breakdown by resource type (CPU, RAM, Storage)
 
-### Cost Visibility
-- [ ] Can see cost-test namespace?
-- [ ] Cost breakdown by deployment?
-- [ ] Label-based filtering?
-- [ ] Historical data available?
+### API Access ✓
+- RESTful API available on port 9003
+- JSON response format
+- Example query: `/allocation/compute?window=1d&aggregate=namespace`
+- Well-documented endpoints
 
-### Missing Features
-- [ ] Right-sizing recommendations: YES / NO
-- [ ] Waste detection: YES / NO
-- [ ] Actionable suggestions: YES / NO
-- [ ] Multi-cluster view: YES / NO
+### UI Features ✓
+- Clean, intuitive interface on port 9090
+- Interactive charts and tables
+- Flexible filtering and grouping
+- Date range selection
+- Export capabilities
 
-## API Testing
-```bash
-curl http://localhost:9003/allocation/compute?window=1d | jq '.'
+## Technical Observations
+
+**Strengths:**
+- Lightweight deployment (single pod)
+- Fast data collection (15 minutes to first results)
+- Flexible aggregation options
+- Clean API design
+- CNCF sandbox project with active development
+
+**Limitations Observed:**
+- Cost visibility only (no optimization recommendations)
+- Single cluster view in standard deployment
+- Requires Prometheus for metrics
+- Default pricing models for non-cloud environments
+
+## Integration Points
+
+**Works with:**
+- Prometheus (required)
+- Cloud provider billing APIs (optional)
+- External cost sources (configurable)
+
+## API Response Example
+```json
+{
+  "code": 200,
+  "data": [{
+    "kube-system": {
+      "name": "kube-system",
+      "properties": {
+        "cluster": "minikube-test",
+        "namespace": "kube-system"
+      },
+      "cpuCores": 1.15,
+      "cpuCost": 0.01,
+      "ramBytes": 2147483648,
+      "ramCost": 0.005,
+      ...
+    }
+  }]
+}
 ```
 
-- [ ] API response format:
-- [ ] Ease of parsing:
-- [ ] Data accuracy:
+## Technical Assessment
 
-## Comparison to Kubecost
+OpenCost provides a solid foundation for Kubernetes cost attribution. It excels at:
+- Accurate cost calculation and allocation
+- Flexible data aggregation
+- Clean API for programmatic access
 
-Better than Kubecost at:
-1. 
-2. 
+The architecture is modular and could serve as a data source for higher-level optimization tools.
 
-Worse than Kubecost at:
-1. 
-2. 
+## Setup Notes
 
-## Critical Findings
+Requires Prometheus endpoint configuration:
+```bash
+kubectl set env deployment/opencost -n opencost \
+  PROMETHEUS_SERVER_ENDPOINT=http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+```
+## OpenCost - Key Facts
 
-### What it does well:
-1. 
-2. 
+**Status:** CNCF Incubating Project (October 2024)  
+**License:** Apache 2.0 - Fully open source, free forever  
+**Cost:** $0 (no paid version, no enterprise trap)  
+**Multi-cluster:** Not native, requires custom setup  
+**Production Adoption:** Grafana Labs, AWS, Google, Adobe, IBM
 
-### What it lacks:
-1. 
-2. 
+**Cluster Name:** Shows as "minikube-test" (set via Helm config, not from kubectl context)
 
-### Gap for our tool:
-1. 
-2. 
+**What It Does:** Cost visibility and attribution  
+**What It Doesn't:** Optimization recommendations, waste detection
