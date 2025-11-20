@@ -1,23 +1,39 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
+	"github.com/opscart/k8s-cost-optimizer/pkg/config"
+	"github.com/opscart/k8s-cost-optimizer/pkg/converter"
 	"github.com/opscart/k8s-cost-optimizer/pkg/executor"
+	"github.com/opscart/k8s-cost-optimizer/pkg/models"
 	"github.com/opscart/k8s-cost-optimizer/pkg/recommender"
 	"github.com/opscart/k8s-cost-optimizer/pkg/scanner"
+	"github.com/opscart/k8s-cost-optimizer/pkg/storage"
 	"github.com/spf13/cobra"
 )
 
 var (
+	// Scan flags
 	namespace     string
 	allNamespaces bool
 	outputFormat  string
+	saveResults   bool
+	clusterID     string
+	
+	// Global config
+	cfg   *config.Config
+	store storage.Store
 )
 
 func main() {
+	// Initialize config
+	cfg = config.NewConfig()
+	
 	var rootCmd = &cobra.Command{
 		Use:   "cost-scan",
 		Short: "Kubernetes cost optimization scanner",
@@ -25,14 +41,51 @@ func main() {
 		Run:   runScan,
 	}
 
+	// Scan flags
 	rootCmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Namespace to scan")
 	rootCmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "Scan all namespaces")
 	rootCmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format: text, json, commands")
+	rootCmd.Flags().BoolVar(&saveResults, "save", false, "Save recommendations to database")
+	rootCmd.Flags().StringVar(&clusterID, "cluster-id", "default", "Cluster identifier")
+
+	// History command
+	historyCmd := &cobra.Command{
+		Use:   "history <namespace>",
+		Short: "View past recommendations",
+		Args:  cobra.ExactArgs(1),
+		Run:   runHistory,
+	}
+	historyCmd.Flags().IntVar(&historyLimit, "limit", 10, "Number of recommendations to show")
+
+	// Audit command
+	auditCmd := &cobra.Command{
+		Use:   "audit <recommendation-id>",
+		Short: "View audit log",
+		Args:  cobra.ExactArgs(1),
+		Run:   runAudit,
+	}
+
+	rootCmd.AddCommand(historyCmd)
+	rootCmd.AddCommand(auditCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func initStorage() error {
+	if !cfg.StorageEnabled || !saveResults {
+		return nil
+	}
+
+	var err error
+	store, err = storage.NewPostgresStore(cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("failed to initialize storage: %w", err)
+	}
+
+	return nil
 }
 
 func runScan(cmd *cobra.Command, args []string) {
@@ -46,72 +99,221 @@ func runScan(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// Initialize storage if --save flag is used
+	if saveResults {
+		if err := initStorage(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+	}
+
 	if outputFormat != "commands" {
 		fmt.Println("[INFO] K8s Cost Optimizer - Starting scan")
+		if saveResults {
+			fmt.Println("[INFO] Results will be saved to database")
+		}
 	}
-	
-	s, err := scanner.New()
+
+	// Initialize scanner
+	scan, err := scanner.New()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing scanner: %v\n", err)
 		os.Exit(1)
 	}
 
-	recommendations, err := s.ScanAndRecommend(namespace, allNamespaces)
+	// Scan and get recommendations (using existing scanner method)
+	oldRecommendations, err := scan.ScanAndRecommend(namespace, allNamespaces)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error scanning cluster: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Output based on format
-	switch outputFormat {
-	case "json":
-		outputJSON(recommendations)
-	case "commands":
-		outputCommands(recommendations)
-	default:
-		outputText(recommendations)
+	if len(oldRecommendations) == 0 {
+		if outputFormat != "commands" {
+			fmt.Println("[INFO] No optimization opportunities found")
+		}
+		return
 	}
 
 	if outputFormat != "commands" {
-		fmt.Println("[INFO] Scan complete")
+		fmt.Printf("[INFO] Found %d recommendation(s)\n\n", len(oldRecommendations))
 	}
-}
 
-func outputText(recommendations []*recommender.Recommendation) {
-	fmt.Println("\n================================================================================")
-	fmt.Println("OPTIMIZATION OPPORTUNITIES\n")
-	
+	// Convert to new models and save if requested
+	var recommendations []*models.Recommendation
 	totalSavings := 0.0
-	actionableCount := 0
-	
-	for _, rec := range recommendations {
-		if rec.Type != recommender.NoAction {
-			fmt.Println(rec.String())
-			fmt.Println()
-			totalSavings += rec.Savings
-			actionableCount++
+
+	for _, oldRec := range oldRecommendations {
+		// Convert to new model
+		newRec := converter.OldToNew(oldRec, clusterID)
+		recommendations = append(recommendations, newRec)
+		totalSavings += newRec.SavingsMonthly
+		
+		// Save to database if requested
+		if saveResults && store != nil {
+			ctx := context.Background()
+			if err := store.SaveRecommendation(ctx, newRec); err != nil {
+				fmt.Fprintf(os.Stderr, "[WARN] Failed to save recommendation: %v\n", err)
+			} else if outputFormat != "commands" {
+				fmt.Printf("[INFO] Saved recommendation for %s/%s (ID: %s)\n",
+					newRec.Workload.Namespace, newRec.Workload.Deployment, newRec.ID)
+			}
 		}
 	}
 
-	if actionableCount == 0 {
-		fmt.Println("No optimization opportunities found.")
-	} else {
-		fmt.Printf("Found %d optimization opportunities\n", actionableCount)
-		fmt.Printf("Total potential savings: $%.2f/month\n\n", totalSavings)
-		fmt.Println("To see kubectl commands, run with: --output commands")
+	// Output results
+	switch outputFormat {
+	case "json":
+		outputJSON(recommendations, totalSavings)
+	case "commands":
+		outputCommands(oldRecommendations)
+	default:
+		outputText(recommendations, totalSavings)
 	}
 }
 
-func outputJSON(recommendations []*recommender.Recommendation) {
-	data, err := json.MarshalIndent(recommendations, "", "  ")
+var historyLimit int
+
+func runHistory(cmd *cobra.Command, args []string) {
+	ns := args[0]
+
+	// Initialize storage
+	if err := initStorage(); err != nil {
+		// Enable storage for history command
+		saveResults = true
+		if err := initStorage(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	recommendations, err := store.ListRecommendations(ctx, ns, historyLimit)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshaling JSON: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println(string(data))
+
+	if len(recommendations) == 0 {
+		fmt.Printf("No recommendations found for namespace: %s\n", ns)
+		return
+	}
+
+	fmt.Printf("Past recommendations for namespace '%s':\n\n", ns)
+	for i, rec := range recommendations {
+		fmt.Printf("%d. %s (%s)\n", i+1, rec.Workload.Deployment, rec.Type)
+		fmt.Printf("   Savings: $%.2f/mo\n", rec.SavingsMonthly)
+		fmt.Printf("   Created: %s\n", rec.CreatedAt.Format("2006-01-02 15:04:05"))
+		if rec.AppliedAt != nil {
+			fmt.Printf("   Applied: %s by %s\n", rec.AppliedAt.Format("2006-01-02 15:04:05"), rec.AppliedBy)
+		} else {
+			fmt.Printf("   Status: Not applied\n")
+		}
+		fmt.Printf("   ID: %s\n", rec.ID)
+		fmt.Println()
+	}
+}
+
+func runAudit(cmd *cobra.Command, args []string) {
+	recommendationID := args[0]
+
+	// Initialize storage
+	saveResults = true
+	if err := initStorage(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	
+	// Get recommendation details
+	rec, err := store.GetRecommendation(ctx, recommendationID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Recommendation: %s\n", rec.ID)
+	fmt.Printf("Deployment: %s (Namespace: %s)\n", rec.Workload.Deployment, rec.Workload.Namespace)
+	fmt.Printf("Type: %s\n", rec.Type)
+	fmt.Printf("Savings: $%.2f/mo\n", rec.SavingsMonthly)
+	fmt.Printf("Created: %s\n\n", rec.CreatedAt.Format("2006-01-02 15:04:05"))
+
+	// Get audit log
+	auditLogs, err := store.GetAuditLog(ctx, recommendationID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(auditLogs) == 0 {
+		fmt.Println("No audit log entries found")
+		return
+	}
+
+	fmt.Println("Audit Log:")
+	for i, log := range auditLogs {
+		fmt.Printf("%d. %s - %s\n", i+1, log.Action, log.Status)
+		fmt.Printf("   Executed: %s\n", log.ExecutedAt.Format("2006-01-02 15:04:05"))
+		if log.ExecutedBy != "" {
+			fmt.Printf("   By: %s\n", log.ExecutedBy)
+		}
+		if log.ErrorMessage != "" {
+			fmt.Printf("   Error: %s\n", log.ErrorMessage)
+		}
+		fmt.Println()
+	}
+}
+
+func outputText(recommendations []*models.Recommendation, totalSavings float64) {
+	if len(recommendations) == 0 {
+		fmt.Println("[INFO] No optimization opportunities found")
+		return
+	}
+
+	fmt.Println("=== Optimization Recommendations ===\n")
+
+	for i, rec := range recommendations {
+		fmt.Printf("%d. %s/%s\n", i+1, rec.Workload.Namespace, rec.Workload.Deployment)
+		fmt.Printf("   Type: %s\n", rec.Type)
+		fmt.Printf("   Current:  CPU=%dm Memory=%dMi\n",
+			rec.CurrentCPU, rec.CurrentMemory/(1024*1024))
+		fmt.Printf("   Recommended: CPU=%dm Memory=%dMi\n",
+			rec.RecommendedCPU, rec.RecommendedMemory/(1024*1024))
+		fmt.Printf("   Savings: $%.2f/month\n", rec.SavingsMonthly)
+		fmt.Printf("   Risk: %s\n", rec.Risk)
+		fmt.Printf("   Command: %s\n", rec.Command)
+		fmt.Println()
+	}
+
+	fmt.Printf("Total potential savings: $%.2f/month\n", totalSavings)
+}
+
+func outputJSON(recommendations []*models.Recommendation, totalSavings float64) {
+	output := map[string]interface{}{
+		"recommendations": recommendations,
+		"total_savings":   totalSavings,
+		"count":          len(recommendations),
+		"timestamp":      time.Now().Format(time.RFC3339),
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(output); err != nil {
+		fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func outputCommands(recommendations []*recommender.Recommendation) {
-	script := executor.GenerateScript(recommendations)
-	fmt.Print(script)
+	for _, rec := range recommendations {
+		cmd := executor.GenerateCommand(rec)
+		if cmd != "" {
+			fmt.Println(cmd)
+		}
+	}
 }
