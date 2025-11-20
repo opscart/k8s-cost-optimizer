@@ -88,6 +88,15 @@ func initStorage() error {
 	return nil
 }
 
+func initStorageForced() error {
+	var err error
+	store, err = storage.NewPostgresStore(cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("failed to initialize storage: %w", err)
+	}
+	return nil
+}
+
 func runScan(cmd *cobra.Command, args []string) {
 	if namespace == "" && !allNamespaces {
 		fmt.Fprintln(os.Stderr, "Error: either --namespace or --all-namespaces must be specified")
@@ -178,14 +187,10 @@ var historyLimit int
 func runHistory(cmd *cobra.Command, args []string) {
 	ns := args[0]
 
-	// Initialize storage
-	if err := initStorage(); err != nil {
-		// Enable storage for history command
-		saveResults = true
-		if err := initStorage(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+	// Force initialize storage for history command
+	if err := initStorageForced(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 	defer store.Close()
 
@@ -220,9 +225,8 @@ func runHistory(cmd *cobra.Command, args []string) {
 func runAudit(cmd *cobra.Command, args []string) {
 	recommendationID := args[0]
 
-	// Initialize storage
-	saveResults = true
-	if err := initStorage(); err != nil {
+	// Force initialize storage for audit command
+	if err := initStorageForced(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
