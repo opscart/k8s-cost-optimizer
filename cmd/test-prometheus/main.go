@@ -40,7 +40,18 @@ func main() {
 
 	fmt.Println("\n" + strings.Repeat("=", 80))
 	fmt.Println("Testing PrometheusSource with cost-test namespace pods")
+	fmt.Println("NOTE: P95/P99 require 24-48h of data for accuracy")
 	fmt.Println(strings.Repeat("=", 80) + "\n")
+
+	// Test with different durations
+	durations := []struct {
+		name string
+		dur  time.Duration
+	}{
+		{"1 hour", 1 * time.Hour},
+		{"12 hours", 12 * time.Hour},
+		{"7 days", 7 * 24 * time.Hour},
+	}
 
 	for _, podName := range testPods {
 		workload := &models.Workload{
@@ -49,28 +60,40 @@ func main() {
 		}
 
 		fmt.Printf("Pod: %s\n", podName)
-		fmt.Println(strings.Repeat("-", 40))
+		fmt.Println(strings.Repeat("-", 80))
 
-		metrics, err := source.GetMetrics(ctx, workload, 7*24*time.Hour)
-		if err != nil {
-			fmt.Printf("  ERROR: %v\n\n", err)
-			continue
-		}
+		for _, d := range durations {
+			fmt.Printf("  [%s]\n", d.name)
+			
+			metrics, err := source.GetMetrics(ctx, workload, d.dur)
+			if err != nil {
+				fmt.Printf("    ERROR: %v\n", err)
+				continue
+			}
 
-		fmt.Printf("  CPU:\n")
-		fmt.Printf("    Current:   %dm\n", metrics.AvgCPU)
-		fmt.Printf("    Requested: %dm\n", metrics.RequestedCPU)
-		if metrics.RequestedCPU > 0 {
-			util := float64(metrics.AvgCPU) / float64(metrics.RequestedCPU) * 100
-			fmt.Printf("    Utilization: %.1f%%\n", util)
-		}
-
-		fmt.Printf("  Memory:\n")
-		fmt.Printf("    Current:   %dMi\n", metrics.AvgMemory/(1024*1024))
-		fmt.Printf("    Requested: %dMi\n", metrics.RequestedMemory/(1024*1024))
-		if metrics.RequestedMemory > 0 {
-			util := float64(metrics.AvgMemory) / float64(metrics.RequestedMemory) * 100
-			fmt.Printf("    Utilization: %.1f%%\n", util)
+			// Show all metrics
+			fmt.Printf("    CPU:  Avg=%dm  P95=%dm  P99=%dm  Max=%dm\n",
+				metrics.AvgCPU, metrics.P95CPU, metrics.P99CPU, metrics.MaxCPU)
+			fmt.Printf("    Mem:  Avg=%dMi P95=%dMi P99=%dMi Max=%dMi\n",
+				metrics.AvgMemory/(1024*1024),
+				metrics.P95Memory/(1024*1024),
+				metrics.P99Memory/(1024*1024),
+				metrics.MaxMemory/(1024*1024))
+			
+			// Show requests
+			fmt.Printf("    Requested: CPU=%dm Memory=%dMi\n",
+				metrics.RequestedCPU, metrics.RequestedMemory/(1024*1024))
+			
+			// Calculate utilization from P95
+			if metrics.RequestedCPU > 0 && metrics.P95CPU > 0 {
+				util := float64(metrics.P95CPU) / float64(metrics.RequestedCPU) * 100
+				fmt.Printf("    P95 Utilization: CPU=%.1f%%", util)
+			}
+			if metrics.RequestedMemory > 0 && metrics.P95Memory > 0 {
+				util := float64(metrics.P95Memory) / float64(metrics.RequestedMemory) * 100
+				fmt.Printf(" Memory=%.1f%%", util)
+			}
+			fmt.Println()
 		}
 
 		fmt.Println()
@@ -78,4 +101,6 @@ func main() {
 
 	fmt.Println(strings.Repeat("=", 80))
 	fmt.Println("[INFO] Test complete!")
+	fmt.Println("[NOTE] If CPU shows 0m, there's insufficient historical data.")
+	fmt.Println("[NOTE] Pods need 24-48h runtime for accurate P95/P99 metrics.")
 }

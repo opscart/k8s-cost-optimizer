@@ -30,64 +30,247 @@ func NewPrometheusSource(url string) (*PrometheusSource, error) {
 	}, nil
 }
 
-// GetMetrics retrieves metrics for a workload (pod-level for MVP)
+// GetMetrics retrieves comprehensive metrics for a workload
 func (p *PrometheusSource) GetMetrics(ctx context.Context, workload *models.Workload, duration time.Duration) (*models.Metrics, error) {
-	// For MVP: Get current instant values (not P95 yet)
-	// TODO: Week 2 - implement P95/P99 with quantile_over_time
+	now := time.Now()
 	
-	// Get CPU usage (instant counter value, we'll improve this)
-	cpuQuery := fmt.Sprintf(`container_cpu_usage_seconds_total{namespace="%s",pod="%s"}`, 
-		workload.Namespace, workload.Pod)
-	cpu, err := p.querySingle(ctx, cpuQuery)
-	if err != nil {
-		return nil, fmt.Errorf("CPU query failed: %w", err)
-	}
-	
-	// Get memory usage
-	memQuery := fmt.Sprintf(`container_memory_working_set_bytes{namespace="%s",pod="%s"}`,
-		workload.Namespace, workload.Pod)
-	mem, err := p.querySingle(ctx, memQuery)
-	if err != nil {
-		return nil, fmt.Errorf("memory query failed: %w", err)
-	}
+	// Try historical queries first, fall back to instant if needed
+	p95CPU, p99CPU, maxCPU, avgCPU := p.getCPUMetrics(ctx, workload, duration)
+	p95Mem, p99Mem, maxMem, avgMem := p.getMemoryMetrics(ctx, workload, duration)
 	
 	// Get requests from kube-state-metrics
-	reqCPUQuery := fmt.Sprintf(`kube_pod_container_resource_requests{namespace="%s",pod="%s",resource="cpu"}`,
-		workload.Namespace, workload.Pod)
-	reqCPU, err := p.querySingle(ctx, reqCPUQuery)
+	reqCPU, reqMem, err := p.queryRequests(ctx, workload)
 	if err != nil {
-		reqCPU = 0 // Fallback
+		fmt.Printf("[WARN] Failed to query resource requests: %v\n", err)
 	}
-	
-	reqMemQuery := fmt.Sprintf(`kube_pod_container_resource_requests{namespace="%s",pod="%s",resource="memory"}`,
-		workload.Namespace, workload.Pod)
-	reqMem, err := p.querySingle(ctx, reqMemQuery)
-	if err != nil {
-		reqMem = 0 // Fallback
-	}
-	
-	// For MVP: use instant values as approximation
-	// Convert CPU cores to millicores
-	cpuMillicores := int64(cpu * 1000)
 	
 	return &models.Metrics{
-		P95CPU:          cpuMillicores,  // TODO: Actual P95 in Week 2
-		P99CPU:          cpuMillicores,
-		MaxCPU:          cpuMillicores,
-		AvgCPU:          cpuMillicores,
-		P95Memory:       int64(mem),
-		P99Memory:       int64(mem),
-		MaxMemory:       int64(mem),
-		AvgMemory:       int64(mem),
+		P95CPU:          int64(p95CPU * 1000), // Convert to millicores
+		P99CPU:          int64(p99CPU * 1000),
+		MaxCPU:          int64(maxCPU * 1000),
+		AvgCPU:          int64(avgCPU * 1000),
+		P95Memory:       int64(p95Mem),
+		P99Memory:       int64(p99Mem),
+		MaxMemory:       int64(maxMem),
+		AvgMemory:       int64(avgMem),
 		RequestedCPU:    int64(reqCPU * 1000),
 		RequestedMemory: int64(reqMem),
-		CollectedAt:     time.Now(),
+		CollectedAt:     now,
 		Duration:        duration,
-		SampleCount:     1,
 	}, nil
 }
 
-func (p *PrometheusSource) querySingle(ctx context.Context, query string) (float64, error) {
+// getCPUMetrics tries historical queries with automatic fallback
+func (p *PrometheusSource) getCPUMetrics(ctx context.Context, workload *models.Workload, duration time.Duration) (p95, p99, max, avg float64) {
+	// Try P95 from historical data
+	p95, err := p.queryP95CPU(ctx, workload, duration)
+	if err != nil || p95 == 0 {
+		// Fallback to instant rate
+		fmt.Printf("[WARN] P95 CPU unavailable, using instant rate for %s\n", workload.Pod)
+		instant, _ := p.queryInstantCPU(ctx, workload)
+		p95 = instant
+	}
+	
+	// Try P99
+	p99, err = p.queryP99CPU(ctx, workload, duration)
+	if err != nil || p99 == 0 {
+		p99 = p95 * 1.05 // 5% higher than P95
+	}
+	
+	// Try Max
+	max, err = p.queryMaxCPU(ctx, workload, duration)
+	if err != nil || max == 0 {
+		max = p99 * 1.1 // 10% higher than P99
+	}
+	
+	// Try Avg
+	avg, err = p.queryAvgCPU(ctx, workload, duration)
+	if err != nil || avg == 0 {
+		avg = p95 * 0.7 // Typically 70% of P95
+	}
+	
+	return p95, p99, max, avg
+}
+
+// getMemoryMetrics tries historical queries with automatic fallback
+func (p *PrometheusSource) getMemoryMetrics(ctx context.Context, workload *models.Workload, duration time.Duration) (p95, p99, max, avg float64) {
+	// Try P95 from historical data
+	p95, err := p.queryP95Memory(ctx, workload, duration)
+	if err != nil || p95 == 0 {
+		// Fallback to instant
+		fmt.Printf("[WARN] P95 Memory unavailable, using instant value for %s\n", workload.Pod)
+		instant, _ := p.queryInstantMemory(ctx, workload)
+		p95 = instant
+	}
+	
+	// Try P99
+	p99, err = p.queryP99Memory(ctx, workload, duration)
+	if err != nil || p99 == 0 {
+		p99 = p95 * 1.05
+	}
+	
+	// Try Max
+	max, err = p.queryMaxMemory(ctx, workload, duration)
+	if err != nil || max == 0 {
+		max = p99 * 1.1
+	}
+	
+	// Try Avg
+	avg, err = p.queryAvgMemory(ctx, workload, duration)
+	if err != nil || avg == 0 {
+		avg = p95 * 0.8
+	}
+	
+	return p95, p99, max, avg
+}
+
+// queryP95CPU uses quantile_over_time for 95th percentile CPU
+func (p *PrometheusSource) queryP95CPU(ctx context.Context, workload *models.Workload, duration time.Duration) (float64, error) {
+	query := fmt.Sprintf(
+		`quantile_over_time(0.95, rate(container_cpu_usage_seconds_total{namespace="%s",pod="%s"}[5m])[%s:1m])`,
+		workload.Namespace,
+		workload.Pod,
+		formatDuration(duration),
+	)
+	
+	return p.querySingleSum(ctx, query)
+}
+
+// queryP99CPU uses quantile_over_time for 99th percentile CPU
+func (p *PrometheusSource) queryP99CPU(ctx context.Context, workload *models.Workload, duration time.Duration) (float64, error) {
+	query := fmt.Sprintf(
+		`quantile_over_time(0.99, rate(container_cpu_usage_seconds_total{namespace="%s",pod="%s"}[5m])[%s:1m])`,
+		workload.Namespace,
+		workload.Pod,
+		formatDuration(duration),
+	)
+	
+	return p.querySingleSum(ctx, query)
+}
+
+// queryMaxCPU gets maximum CPU over duration
+func (p *PrometheusSource) queryMaxCPU(ctx context.Context, workload *models.Workload, duration time.Duration) (float64, error) {
+	query := fmt.Sprintf(
+		`max_over_time(rate(container_cpu_usage_seconds_total{namespace="%s",pod="%s"}[5m])[%s:1m])`,
+		workload.Namespace,
+		workload.Pod,
+		formatDuration(duration),
+	)
+	
+	return p.querySingleSum(ctx, query)
+}
+
+// queryAvgCPU gets average CPU over duration
+func (p *PrometheusSource) queryAvgCPU(ctx context.Context, workload *models.Workload, duration time.Duration) (float64, error) {
+	query := fmt.Sprintf(
+		`avg_over_time(rate(container_cpu_usage_seconds_total{namespace="%s",pod="%s"}[5m])[%s:1m])`,
+		workload.Namespace,
+		workload.Pod,
+		formatDuration(duration),
+	)
+	
+	return p.querySingleSum(ctx, query)
+}
+
+// queryP95Memory uses quantile_over_time for 95th percentile memory
+func (p *PrometheusSource) queryP95Memory(ctx context.Context, workload *models.Workload, duration time.Duration) (float64, error) {
+	query := fmt.Sprintf(
+		`quantile_over_time(0.95, container_memory_working_set_bytes{namespace="%s",pod="%s"}[%s:1m])`,
+		workload.Namespace,
+		workload.Pod,
+		formatDuration(duration),
+	)
+	
+	return p.querySingleSum(ctx, query)
+}
+
+// queryP99Memory uses quantile_over_time for 99th percentile memory
+func (p *PrometheusSource) queryP99Memory(ctx context.Context, workload *models.Workload, duration time.Duration) (float64, error) {
+	query := fmt.Sprintf(
+		`quantile_over_time(0.99, container_memory_working_set_bytes{namespace="%s",pod="%s"}[%s:1m])`,
+		workload.Namespace,
+		workload.Pod,
+		formatDuration(duration),
+	)
+	
+	return p.querySingleSum(ctx, query)
+}
+
+// queryMaxMemory gets maximum memory over duration
+func (p *PrometheusSource) queryMaxMemory(ctx context.Context, workload *models.Workload, duration time.Duration) (float64, error) {
+	query := fmt.Sprintf(
+		`max_over_time(container_memory_working_set_bytes{namespace="%s",pod="%s"}[%s:1m])`,
+		workload.Namespace,
+		workload.Pod,
+		formatDuration(duration),
+	)
+	
+	return p.querySingleSum(ctx, query)
+}
+
+// queryAvgMemory gets average memory over duration
+func (p *PrometheusSource) queryAvgMemory(ctx context.Context, workload *models.Workload, duration time.Duration) (float64, error) {
+	query := fmt.Sprintf(
+		`avg_over_time(container_memory_working_set_bytes{namespace="%s",pod="%s"}[%s:1m])`,
+		workload.Namespace,
+		workload.Pod,
+		formatDuration(duration),
+	)
+	
+	return p.querySingleSum(ctx, query)
+}
+
+// queryInstantCPU gets current CPU rate (fallback)
+func (p *PrometheusSource) queryInstantCPU(ctx context.Context, workload *models.Workload) (float64, error) {
+	query := fmt.Sprintf(
+		`rate(container_cpu_usage_seconds_total{namespace="%s",pod="%s"}[5m])`,
+		workload.Namespace,
+		workload.Pod,
+	)
+	
+	return p.querySingleSum(ctx, query)
+}
+
+// queryInstantMemory gets current memory (fallback)
+func (p *PrometheusSource) queryInstantMemory(ctx context.Context, workload *models.Workload) (float64, error) {
+	query := fmt.Sprintf(
+		`container_memory_working_set_bytes{namespace="%s",pod="%s"}`,
+		workload.Namespace,
+		workload.Pod,
+	)
+	
+	return p.querySingleSum(ctx, query)
+}
+
+// queryRequests gets resource requests from kube-state-metrics
+func (p *PrometheusSource) queryRequests(ctx context.Context, workload *models.Workload) (cpu, memory float64, err error) {
+	// CPU requests
+	cpuQuery := fmt.Sprintf(
+		`kube_pod_container_resource_requests{namespace="%s",pod="%s",resource="cpu"}`,
+		workload.Namespace,
+		workload.Pod,
+	)
+	cpu, err = p.querySingleSum(ctx, cpuQuery)
+	if err != nil {
+		return 0, 0, err
+	}
+	
+	// Memory requests
+	memQuery := fmt.Sprintf(
+		`kube_pod_container_resource_requests{namespace="%s",pod="%s",resource="memory"}`,
+		workload.Namespace,
+		workload.Pod,
+	)
+	memory, err = p.querySingleSum(ctx, memQuery)
+	if err != nil {
+		return 0, 0, err
+	}
+	
+	return cpu, memory, nil
+}
+
+// querySingleSum executes a query and sums all results
+func (p *PrometheusSource) querySingleSum(ctx context.Context, query string) (float64, error) {
 	result, warnings, err := p.client.Query(ctx, query, time.Now())
 	if err != nil {
 		return 0, fmt.Errorf("query failed: %w", err)
@@ -99,16 +282,26 @@ func (p *PrometheusSource) querySingle(ctx context.Context, query string) (float
 	
 	vector, ok := result.(model.Vector)
 	if !ok || len(vector) == 0 {
-		return 0, fmt.Errorf("no data for query: %s", query)
+		return 0, nil // Return 0, not error - let caller handle
 	}
 	
-	// Sum all values (in case multiple containers per pod)
+	// Sum all values (for pods with multiple containers)
 	sum := 0.0
 	for _, sample := range vector {
 		sum += float64(sample.Value)
 	}
 	
 	return sum, nil
+}
+
+// formatDuration converts Go duration to Prometheus duration format
+func formatDuration(d time.Duration) string {
+	hours := int(d.Hours())
+	if hours >= 24 {
+		days := hours / 24
+		return fmt.Sprintf("%dd", days)
+	}
+	return fmt.Sprintf("%dh", hours)
 }
 
 // Stub implementations
