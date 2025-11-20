@@ -1,34 +1,29 @@
 # Goldilocks Evaluation Checklist
 
-**Date:** [Fill in]  
-**Version:** [Fill in]
+**Date:** November 19, 2025  
+**Status:** ✅ Evaluation Complete
 
-## Installation
+See detailed evaluation: [goldilocks-evaluation.md](goldilocks-evaluation.md)
 
-- [ ] Installation time: _____
-- [ ] VPA required: YES
-- [ ] Setup complexity: _____
+## Quick Summary
 
-## Features
+**What it is:** VPA (Vertical Pod Autoscaler) visualization dashboard
 
-- [ ] Shows right-sizing recommendations?
-- [ ] Only CPU/memory or more?
-- [ ] Cost attribution: YES / NO
-- [ ] Waste detection: YES / NO
+**Key findings:**
+- ✅ Provides specific CPU/memory values (25m, 250Mi)
+- ✅ Gives copy/paste YAML snippets
+- ❌ No cost context or $ savings
+- ❌ No kubectl commands
+- ❌ Requires VPA installation
+- ❌ Right-sizing only (no waste detection)
 
-## Scope
+**Verdict:** Useful for VPA visualization, but still requires manual YAML editing
 
-- [ ] Single cluster only?
-- [ ] Limited to VPA recommendations?
-- [ ] Missing features:
+## Screenshots
 
-## Critical Assessment
+- [Dashboard](screenshots/goldilocks/dashboard.png)
+- [Workload details](screenshots/goldilocks/workload-details.png)
 
-Worth using:
-- [ ] YES
-- [ ] NO
-- [ ] Only for specific use case:
+## API Output
 
-Gaps for our tool:
-1. 
-2. 
+- [VPA recommendations JSON](api-outputs/goldilocks/all-vpa-recommendations.json)

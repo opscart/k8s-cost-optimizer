@@ -1,0 +1,58 @@
+{
+  "apiVersion": "autoscaling.k8s.io/v1",
+  "kind": "VerticalPodAutoscaler",
+  "metadata": {
+    "creationTimestamp": "2025-11-20T02:36:59Z",
+    "generation": 1,
+    "labels": {
+      "creator": "Fairwinds",
+      "source": "goldilocks"
+    },
+    "name": "goldilocks-overprovision-app",
+    "namespace": "cost-test",
+    "resourceVersion": "34389",
+    "uid": "6002ab60-a7eb-4c2f-8c89-46fd92f8fdec"
+  },
+  "spec": {
+    "targetRef": {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "name": "overprovision-app"
+    },
+    "updatePolicy": {
+      "updateMode": "Off"
+    }
+  },
+  "status": {
+    "conditions": [
+      {
+        "lastTransitionTime": "2025-11-20T02:37:47Z",
+        "status": "True",
+        "type": "RecommendationProvided"
+      }
+    ],
+    "recommendation": {
+      "containerRecommendations": [
+        {
+          "containerName": "nginx",
+          "lowerBound": {
+            "cpu": "25m",
+            "memory": "250Mi"
+          },
+          "target": {
+            "cpu": "25m",
+            "memory": "250Mi"
+          },
+          "uncappedTarget": {
+            "cpu": "25m",
+            "memory": "250Mi"
+          },
+          "upperBound": {
+            "cpu": "765m",
+            "memory": "800071428"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "apiVersion": "autoscaling.k8s.io/v1",
+  "kind": "VerticalPodAutoscaler",
+  "metadata": {
+    "creationTimestamp": "2025-11-20T02:36:59Z",
+    "generation": 1,
+    "labels": {
+      "creator": "Fairwinds",
+      "source": "goldilocks"
+    },
+    "name": "goldilocks-idle-app",
+    "namespace": "cost-test",
+    "resourceVersion": "34392",
+    "uid": "16b78cbb-5e1d-41bc-8f43-9d863295652e"
+  },
+  "spec": {
+    "targetRef": {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "name": "idle-app"
+    },
+    "updatePolicy": {
+      "updateMode": "Off"
+    }
+  },
+  "status": {
+    "conditions": [
+      {
+        "lastTransitionTime": "2025-11-20T02:37:47Z",
+        "status": "True",
+        "type": "RecommendationProvided"
+      }
+    ],
+    "recommendation": {
+      "containerRecommendations": [
+        {
+          "containerName": "sleeper",
+          "lowerBound": {
+            "cpu": "25m",
+            "memory": "250Mi"
+          },
+          "target": {
+            "cpu": "25m",
+            "memory": "250Mi"
+          },
+          "uncappedTarget": {
+            "cpu": "25m",
+            "memory": "250Mi"
+          },
+          "upperBound": {
+            "cpu": "765m",
+            "memory": "800071428"
+          }
+        }
+      ]
+    }
+  }
+}
