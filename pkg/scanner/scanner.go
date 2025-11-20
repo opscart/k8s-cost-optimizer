@@ -50,29 +50,29 @@ func New() (*Scanner, error) {
 	}, nil
 }
 
-func (s *Scanner) Scan(namespace string, allNamespaces bool) error {
+func (s *Scanner) ScanAndRecommend(namespace string, allNamespaces bool) ([]*recommender.Recommendation, error) {
 	ctx := context.Background()
 
 	version, err := s.clientset.Discovery().ServerVersion()
 	if err != nil {
-		return fmt.Errorf("failed to connect to cluster: %w", err)
+		return nil, fmt.Errorf("failed to connect to cluster: %w", err)
 	}
 
-	fmt.Printf("[INFO] Connected to Kubernetes cluster (version: %s)\n", version.GitVersion)
+	fmt.Printf("[INFO] Connected to cluster (version: %s)\n", version.GitVersion)
 
 	namespaces := []string{namespace}
 	if allNamespaces {
 		nsList, err := s.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 		if err != nil {
-			return fmt.Errorf("failed to list namespaces: %w", err)
+			return nil, fmt.Errorf("failed to list namespaces: %w", err)
 		}
 		namespaces = []string{}
 		for _, ns := range nsList.Items {
 			namespaces = append(namespaces, ns.Name)
 		}
-		fmt.Printf("[INFO] Scanning %d namespaces\n\n", len(namespaces))
+		fmt.Printf("[INFO] Scanning %d namespaces\n", len(namespaces))
 	} else {
-		fmt.Printf("[INFO] Scanning namespace: %s\n\n", namespace)
+		fmt.Printf("[INFO] Scanning namespace: %s\n", namespace)
 	}
 
 	var allRecommendations []*recommender.Recommendation
@@ -86,30 +86,7 @@ func (s *Scanner) Scan(namespace string, allNamespaces bool) error {
 		allRecommendations = append(allRecommendations, recommendations...)
 	}
 
-	// Print summary
-	fmt.Println("\n" + string(make([]byte, 80)) + "\n") // Separator
-	fmt.Println("OPTIMIZATION OPPORTUNITIES\n")
-	
-	totalSavings := 0.0
-	actionableCount := 0
-	
-	for _, rec := range allRecommendations {
-		if rec.Type != recommender.NoAction {
-			fmt.Println(rec.String())
-			fmt.Println()
-			totalSavings += rec.Savings
-			actionableCount++
-		}
-	}
-
-	if actionableCount == 0 {
-		fmt.Println("No optimization opportunities found. Resources are well-sized.")
-	} else {
-		fmt.Printf("Found %d optimization opportunities\n", actionableCount)
-		fmt.Printf("Total potential savings: $%.2f/month\n", totalSavings)
-	}
-
-	return nil
+	return allRecommendations, nil
 }
 
 func (s *Scanner) scanNamespace(ctx context.Context, namespace string) ([]*recommender.Recommendation, error) {
@@ -127,7 +104,6 @@ func (s *Scanner) scanNamespace(ctx context.Context, namespace string) ([]*recom
 		return nil, fmt.Errorf("failed to analyze pods: %w", err)
 	}
 
-	// Group by deployment
 	deploymentPods := make(map[string][]analyzer.PodAnalysis)
 	for _, analysis := range analyses {
 		for _, deploy := range deployments.Items {
@@ -140,7 +116,6 @@ func (s *Scanner) scanNamespace(ctx context.Context, namespace string) ([]*recom
 
 	var recommendations []*recommender.Recommendation
 
-	// Generate recommendations for each deployment
 	for deployName, pods := range deploymentPods {
 		if len(pods) == 0 {
 			continue
