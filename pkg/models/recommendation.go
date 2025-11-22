@@ -13,31 +13,31 @@ const (
 
 // Recommendation represents an optimization recommendation
 type Recommendation struct {
-	ID                string
-	Type              RecommendationType
-	Workload          *Workload
-	
+	ID       string
+	Type     RecommendationType
+	Workload *Workload
+
 	// Current state
-	CurrentCPU        int64
-	CurrentMemory     int64
-	
+	CurrentCPU    int64
+	CurrentMemory int64
+
 	// Recommended state
 	RecommendedCPU    int64
 	RecommendedMemory int64
-	
+
 	// Analysis
-	Reason            string
-	SavingsMonthly    float64
-	Impact            string // HIGH, MEDIUM, LOW
-	Risk              RiskLevel
-	
+	Reason         string
+	SavingsMonthly float64
+	Impact         string // HIGH, MEDIUM, LOW
+	Risk           RiskLevel
+
 	// Generated command
-	Command           string
-	
+	Command string
+
 	// Metadata
-	CreatedAt         time.Time
-	AppliedAt         *time.Time
-	AppliedBy         string
+	CreatedAt time.Time
+	AppliedAt *time.Time
+	AppliedBy string
 }
 
 // AuditEntry represents an action taken
