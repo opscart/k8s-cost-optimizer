@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cpu-stress
+  namespace: cost-test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cpu-stress
+  template:
+    metadata:
+      labels:
+        app: cpu-stress
+    spec:
+      containers:
+      - name: stress
+        image: polinux/stress
+        resources:
+          requests:
+            cpu: 500m
+            memory: 256Mi
+        command: ["stress"]
+        args: ["--cpu", "1", "--timeout", "3600s"]  # Use 1 CPU core
