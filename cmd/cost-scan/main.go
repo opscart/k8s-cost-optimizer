@@ -27,14 +27,24 @@ var (
 	saveResults   bool
 	clusterID     string
 	usePrometheus bool
+	provider      string
+	region        string
+	dryRun        bool
+	verbose       bool
 
 	// Global config
 	cfg   *config.Config
 	store storage.Store
-	
+
 	// History command vars
 	historyLimit int
 )
+
+func logVerbose(format string, args ...interface{}) {
+	if verbose {
+		fmt.Printf("[DEBUG] "+format+"\n", args...)
+	}
+}
 
 func main() {
 	// Initialize config
@@ -54,6 +64,10 @@ func main() {
 	rootCmd.Flags().BoolVar(&saveResults, "save", false, "Save recommendations to database")
 	rootCmd.Flags().StringVar(&clusterID, "cluster-id", "default", "Cluster identifier")
 	rootCmd.Flags().BoolVar(&usePrometheus, "use-prometheus", true, "Use Prometheus for P95/P99 metrics (default: true)")
+	rootCmd.Flags().StringVar(&provider, "provider", "", "Cloud provider: azure, aws, gcp (auto-detect if empty)")
+	rootCmd.Flags().StringVar(&region, "region", "", "Cloud region (e.g., eastus, us-east-1)")
+	rootCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show recommendations without saving")
+	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging")
 
 	// History command
 	historyCmd := &cobra.Command{
@@ -126,8 +140,10 @@ func runScan(cmd *cobra.Command, args []string) {
 
 	if outputFormat != "commands" {
 		fmt.Println("[INFO] K8s Cost Optimizer - Starting scan")
-		if saveResults {
+		if saveResults && !dryRun {
 			fmt.Println("[INFO] Results will be saved to database")
+		} else if dryRun {
+			fmt.Println("[INFO] Dry-run mode: recommendations will not be saved")
 		}
 	}
 
@@ -143,14 +159,14 @@ func runScan(cmd *cobra.Command, args []string) {
 	// Try to use Prometheus if enabled
 	var promAnalyzer *analyzer.PrometheusAnalyzer
 	metricsSource := "metrics-server (instant snapshots)"
-	
+
 	if usePrometheus && cfg.PrometheusURL != "" {
 		promAnalyzer, err = analyzer.NewPrometheusAnalyzer(
 			scan.GetClientset(),
 			cfg.PrometheusURL,
 			cfg,
 		)
-		
+
 		if err != nil {
 			if outputFormat != "commands" {
 				fmt.Printf("[WARN] Prometheus initialization failed: %v\n", err)
@@ -161,7 +177,7 @@ func runScan(cmd *cobra.Command, args []string) {
 			metricsSource = fmt.Sprintf("Prometheus P95/P99 (%d days lookback)", cfg.MetricsLookbackDays)
 			if outputFormat != "commands" {
 				fmt.Printf("[INFO] Using Prometheus at %s\n", cfg.PrometheusURL)
-				fmt.Printf("[INFO] Metrics window: %d days, Safety buffer: %.1fx\n", 
+				fmt.Printf("[INFO] Metrics window: %d days, Safety buffer: %.1fx\n",
 					cfg.MetricsLookbackDays, cfg.SafetyBuffer)
 			}
 		} else {
@@ -177,17 +193,27 @@ func runScan(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Auto-detect cloud provider for pricing
-	detectedProvider := "default"
-	detectedRegion := "unknown"
-	
-	if clientset := scan.GetClientset(); clientset != nil {
-		detectedProvider, detectedRegion, err = pricing.DetectProvider(ctx, clientset)
-		if err != nil && outputFormat != "commands" {
-			fmt.Printf("[WARN] Cloud detection failed: %v, using default pricing\n", err)
-			detectedProvider = "default"
+	// Cloud provider - use flags if provided, otherwise auto-detect
+	detectedProvider := provider
+	detectedRegion := region
+
+	if detectedProvider == "" {
+		detectedProvider = "default"
+		detectedRegion = "unknown"
+		if clientset := scan.GetClientset(); clientset != nil {
+			detectedProvider, detectedRegion, err = pricing.DetectProvider(ctx, clientset)
+			if err != nil && outputFormat != "commands" {
+				fmt.Printf("[WARN] Cloud detection failed: %v, using default\n", err)
+				detectedProvider = "default"
+			}
 		}
 	}
+
+	if detectedRegion == "" {
+		detectedRegion = "unknown"
+	}
+
+	logVerbose("Using provider: %s, region: %s", detectedProvider, detectedRegion)
 
 	// Create pricing provider
 	pricingConfig := &pricing.Config{
@@ -219,7 +245,7 @@ func runScan(cmd *cobra.Command, args []string) {
 
 	// Scan using Prometheus or fallback to metrics-server
 	var oldRecommendations []*recommender.Recommendation
-	
+
 	if promAnalyzer != nil {
 		// Use Prometheus P95/P99 metrics
 		analyses, err := promAnalyzer.AnalyzePodsWithPrometheus(ctx, namespace)
@@ -238,7 +264,7 @@ func runScan(cmd *cobra.Command, args []string) {
 		// Group by deployment and generate recommendations
 		deploymentPods := groupPodsByDeployment(analyses)
 		rec := recommender.NewWithPricing(priceProvider)
-		
+
 		for deploymentName, pods := range deploymentPods {
 			recommendation := rec.Analyze(pods, deploymentName)
 			if recommendation != nil {
@@ -276,7 +302,7 @@ func runScan(cmd *cobra.Command, args []string) {
 		totalSavings += newRec.SavingsMonthly
 
 		// Save to database if requested
-		if saveResults && store != nil {
+		if saveResults && !dryRun && store != nil {
 			if err := store.SaveRecommendation(ctx, newRec); err != nil {
 				fmt.Fprintf(os.Stderr, "[WARN] Failed to save recommendation: %v\n", err)
 			} else if outputFormat != "commands" {
@@ -300,13 +326,13 @@ func runScan(cmd *cobra.Command, args []string) {
 // Helper function to group pod analyses by deployment
 func groupPodsByDeployment(analyses []analyzer.PodAnalysis) map[string][]analyzer.PodAnalysis {
 	deploymentPods := make(map[string][]analyzer.PodAnalysis)
-	
+
 	for _, analysis := range analyses {
 		// Extract deployment name from pod name (before last dash and hash)
 		deploymentName := extractDeploymentName(analysis.Name)
 		deploymentPods[deploymentName] = append(deploymentPods[deploymentName], analysis)
 	}
-	
+
 	return deploymentPods
 }
 
