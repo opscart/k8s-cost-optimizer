@@ -135,7 +135,3 @@ func (s *Scanner) GetAnalyzer() *analyzer.Analyzer {
 	return s.analyzer
 }
 
-// GetAnalyzer returns the analyzer for direct use
-func (s *Scanner) GetAnalyzer() *analyzer.Analyzer {
-	return s.analyzer
-}
