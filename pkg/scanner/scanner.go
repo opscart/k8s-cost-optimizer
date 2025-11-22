@@ -129,3 +129,13 @@ func (s *Scanner) scanNamespace(ctx context.Context, namespace string) ([]*recom
 
 	return recommendations, nil
 }
+
+// GetAnalyzer returns the analyzer for direct use
+func (s *Scanner) GetAnalyzer() *analyzer.Analyzer {
+	return s.analyzer
+}
+
+// GetAnalyzer returns the analyzer for direct use
+func (s *Scanner) GetAnalyzer() *analyzer.Analyzer {
+	return s.analyzer
+}

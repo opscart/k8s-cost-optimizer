@@ -1,9 +1,11 @@
 package recommender
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/opscart/k8s-cost-optimizer/pkg/analyzer"
+	"github.com/opscart/k8s-cost-optimizer/pkg/pricing"
 )
 
 type RecommendationType string
@@ -26,30 +28,47 @@ type Recommendation struct {
 	Savings           float64
 	Impact            string
 	Risk              string
+	Provider          string // Cloud provider used for pricing
 }
 
 type Recommender struct {
-	cpuCostPerCore    float64
-	memoryCostPerGiB  float64
-	safetyBuffer      float64
+	pricingProvider pricing.Provider
+	safetyBuffer    float64
 }
 
+// New creates a recommender with default pricing (backwards compatible)
 func New() *Recommender {
 	return &Recommender{
-		cpuCostPerCore:   23.0,
-		memoryCostPerGiB: 3.0,
-		safetyBuffer:     2.0,
+		pricingProvider: pricing.NewDefaultProvider(23.0, 3.0),
+		safetyBuffer:    1.5,
+	}
+}
+
+// NewWithPricing creates a recommender with a specific pricing provider
+func NewWithPricing(provider pricing.Provider) *Recommender {
+	return &Recommender{
+		pricingProvider: provider,
+		safetyBuffer:    1.5,
 	}
 }
 
 func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName string) *Recommendation {
+	ctx := context.Background()
+
 	if len(analyses) == 0 {
 		return nil
 	}
 
+	rec := &Recommendation{
+		DeploymentName: deploymentName,
+		Namespace:      analyses[0].Namespace,
+		Provider:       r.pricingProvider.Name(),
+	}
+
+	// Calculate average requested and actual usage
 	var totalRequestedCPU, totalActualCPU int64
 	var totalRequestedMem, totalActualMem int64
-	
+
 	for _, analysis := range analyses {
 		totalRequestedCPU += analysis.RequestedCPU
 		totalActualCPU += analysis.ActualCPU
@@ -58,29 +77,25 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 	}
 
 	avgRequestedCPU := totalRequestedCPU / int64(len(analyses))
-	avgActualCPU := totalActualCPU / int64(len(analyses))
 	avgRequestedMem := totalRequestedMem / int64(len(analyses))
+	avgActualCPU := totalActualCPU / int64(len(analyses))
 	avgActualMem := totalActualMem / int64(len(analyses))
 
-	rec := &Recommendation{
-		DeploymentName: deploymentName,
-		Namespace:      analyses[0].Namespace,
-		CurrentCPU:     avgRequestedCPU,
-		CurrentMemory:  avgRequestedMem,
-	}
+	rec.CurrentCPU = avgRequestedCPU
+	rec.CurrentMemory = avgRequestedMem
 
-	// IMPROVED LOGIC: Only suggest scale down if BOTH CPU and memory are extremely low
-	// AND actual usage is near zero (not just low utilization)
-	if avgActualCPU < 1 && avgActualMem < 5*1024*1024 { // <1m CPU, <5Mi memory
+	// Check if workload is idle (< 5% CPU usage)
+	cpuUtil := float64(avgActualCPU) / float64(avgRequestedCPU)
+	if cpuUtil < 0.05 {
 		rec.Type = ScaleDown
-		rec.Reason = "Extremely low resource usage - workload appears idle"
+		rec.Reason = fmt.Sprintf("Workload appears idle (%.1f%% CPU utilization)", cpuUtil*100)
 		rec.RecommendedCPU = 0
 		rec.RecommendedMemory = 0
 		rec.Impact = "HIGH"
 		rec.Risk = "MEDIUM"
-		
-		rec.Savings = r.calculateMonthlyCost(avgRequestedCPU, avgRequestedMem) * float64(len(analyses))
-		
+
+		rec.Savings = r.calculateMonthlyCost(ctx, avgRequestedCPU, avgRequestedMem) * float64(len(analyses))
+
 		return rec
 	}
 
@@ -88,33 +103,29 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 	recCPU := int64(float64(avgActualCPU) * r.safetyBuffer)
 	recMem := int64(float64(avgActualMem) * r.safetyBuffer)
 
-	// Set minimum values
-	minCPU := int64(25) // 25m minimum
-	minMem := int64(50 * 1024 * 1024) // 50Mi minimum
-	
-	if recCPU < minCPU {
-		recCPU = minCPU
+	// Minimum thresholds
+	if recCPU < 10 {
+		recCPU = 10
 	}
-	if recMem < minMem {
-		recMem = minMem
+	if recMem < 10*1024*1024 {
+		recMem = 10 * 1024 * 1024
 	}
 
-	// Check if right-sizing would save significant resources
-	cpuReduction := float64(avgRequestedCPU-recCPU) / float64(avgRequestedCPU) * 100
-	memReduction := float64(avgRequestedMem-recMem) / float64(avgRequestedMem) * 100
+	// Check if right-sizing is beneficial
+	cpuReduction := (float64(avgRequestedCPU) - float64(recCPU)) / float64(avgRequestedCPU) * 100
+	memReduction := (float64(avgRequestedMem) - float64(recMem)) / float64(avgRequestedMem) * 100
 
-	// Only recommend if reduction is >20% AND savings are meaningful
-	if (cpuReduction > 20 || memReduction > 20) {
+	if cpuReduction > 25 || memReduction > 25 {
 		rec.Type = RightSize
 		rec.RecommendedCPU = recCPU
 		rec.RecommendedMemory = recMem
-		rec.Reason = fmt.Sprintf("Over-provisioned: %.0f%% CPU, %.0f%% memory reduction possible", 
+		rec.Reason = fmt.Sprintf("Over-provisioned: %.0f%% CPU, %.0f%% memory reduction possible",
 			cpuReduction, memReduction)
-		
-		currentCost := r.calculateMonthlyCost(avgRequestedCPU, avgRequestedMem) * float64(len(analyses))
-		newCost := r.calculateMonthlyCost(recCPU, recMem) * float64(len(analyses))
+
+		currentCost := r.calculateMonthlyCost(ctx, avgRequestedCPU, avgRequestedMem) * float64(len(analyses))
+		newCost := r.calculateMonthlyCost(ctx, recCPU, recMem) * float64(len(analyses))
 		rec.Savings = currentCost - newCost
-		
+
 		// Skip if savings are negligible (<$1/month)
 		if rec.Savings < 1.0 {
 			rec.Type = NoAction
@@ -123,7 +134,7 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 			rec.Risk = "NONE"
 			return rec
 		}
-		
+
 		if rec.Savings > 50 {
 			rec.Impact = "HIGH"
 		} else if rec.Savings > 20 {
@@ -131,9 +142,17 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 		} else {
 			rec.Impact = "LOW"
 		}
-		
-		rec.Risk = "LOW"
-		
+
+		// Risk assessment based on reduction percentage
+		avgReduction := (cpuReduction + memReduction) / 2
+		if avgReduction > 75 {
+			rec.Risk = "HIGH"
+		} else if avgReduction > 50 {
+			rec.Risk = "MEDIUM"
+		} else {
+			rec.Risk = "LOW"
+		}
+
 		return rec
 	}
 
@@ -149,11 +168,20 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 	return rec
 }
 
-func (r *Recommender) calculateMonthlyCost(cpuMillicores int64, memoryBytes int64) float64 {
+func (r *Recommender) calculateMonthlyCost(ctx context.Context, cpuMillicores int64, memoryBytes int64) float64 {
+	// Get cost info from provider
+	costInfo, err := r.pricingProvider.GetCostInfo(ctx, "", "")
+	if err != nil {
+		// Fallback to defaults if provider fails
+		cpuCores := float64(cpuMillicores) / 1000.0
+		memoryGiB := float64(memoryBytes) / (1024.0 * 1024.0 * 1024.0)
+		return (cpuCores * 23.0) + (memoryGiB * 3.0)
+	}
+
 	cpuCores := float64(cpuMillicores) / 1000.0
 	memoryGiB := float64(memoryBytes) / (1024.0 * 1024.0 * 1024.0)
-	
-	return (cpuCores * r.cpuCostPerCore) + (memoryGiB * r.memoryCostPerGiB)
+
+	return (cpuCores * costInfo.CPUCostPerCore) + (memoryGiB * costInfo.MemoryCostPerGiB)
 }
 
 func (r *Recommendation) String() string {
@@ -164,26 +192,27 @@ func (r *Recommendation) String() string {
 	if r.Type == ScaleDown {
 		return fmt.Sprintf(
 			"[%s] %s: %s\n"+
-			"  Current: %dm CPU, %dMi memory\n"+
-			"  Recommendation: Scale to 0 replicas\n"+
-			"  Savings: $%.2f/month\n"+
-			"  Risk: %s",
+				"  Current: %dm CPU, %dMi memory\n"+
+				"  Recommendation: Scale to 0 replicas\n"+
+				"  Savings: $%.2f/month (%s pricing)\n"+
+				"  Risk: %s",
 			r.Impact,
 			r.DeploymentName,
 			r.Reason,
 			r.CurrentCPU,
 			r.CurrentMemory/(1024*1024),
 			r.Savings,
+			r.Provider,
 			r.Risk,
 		)
 	}
 
 	return fmt.Sprintf(
 		"[%s] %s: %s\n"+
-		"  Current: %dm CPU, %dMi memory\n"+
-		"  Recommended: %dm CPU, %dMi memory (with 2x safety buffer)\n"+
-		"  Savings: $%.2f/month\n"+
-		"  Risk: %s",
+			"  Current: %dm CPU, %dMi memory\n"+
+			"  Recommended: %dm CPU, %dMi memory (with 1.5x safety buffer)\n"+
+			"  Savings: $%.2f/month (%s pricing)\n"+
+			"  Risk: %s",
 		r.Impact,
 		r.DeploymentName,
 		r.Reason,
@@ -192,6 +221,7 @@ func (r *Recommendation) String() string {
 		r.RecommendedCPU,
 		r.RecommendedMemory/(1024*1024),
 		r.Savings,
+		r.Provider,
 		r.Risk,
 	)
 }
