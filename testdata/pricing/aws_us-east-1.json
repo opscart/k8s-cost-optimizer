@@ -1,0 +1,8 @@
+{
+  "Provider": "aws",
+  "Region": "us-east-1",
+  "CPUCostPerCore": 33,
+  "MemoryCostPerGiB": 4.5,
+  "Currency": "USD",
+  "LastUpdated": "2025-11-21T21:16:22.787171-05:00"
+}

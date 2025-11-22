@@ -1,0 +1,6 @@
+linters:
+  disable:
+    - errcheck
+run:
+  skip-dirs:
+    - cmd/test-*

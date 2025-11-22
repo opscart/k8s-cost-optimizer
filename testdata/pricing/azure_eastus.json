@@ -1,0 +1,8 @@
+{
+  "Provider": "azure",
+  "Region": "eastus",
+  "CPUCostPerCore": 35,
+  "MemoryCostPerGiB": 4.3,
+  "Currency": "USD",
+  "LastUpdated": "2025-11-21T21:16:22.786161-05:00"
+}

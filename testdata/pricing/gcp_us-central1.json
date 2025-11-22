@@ -1,0 +1,8 @@
+{
+  "Provider": "gcp",
+  "Region": "us-central1",
+  "CPUCostPerCore": 31,
+  "MemoryCostPerGiB": 4.2,
+  "Currency": "USD",
+  "LastUpdated": "2025-11-21T21:16:22.787484-05:00"
+}
