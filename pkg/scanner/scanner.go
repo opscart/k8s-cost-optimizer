@@ -7,10 +7,10 @@ import (
 
 	"github.com/opscart/k8s-cost-optimizer/pkg/analyzer"
 	"github.com/opscart/k8s-cost-optimizer/pkg/recommender"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
@@ -120,7 +120,7 @@ func (s *Scanner) scanNamespace(ctx context.Context, namespace string) ([]*recom
 		if len(pods) == 0 {
 			continue
 		}
-		
+
 		rec := s.recommender.Analyze(pods, deployName)
 		if rec != nil {
 			recommendations = append(recommendations, rec)
@@ -135,3 +135,7 @@ func (s *Scanner) GetAnalyzer() *analyzer.Analyzer {
 	return s.analyzer
 }
 
+// GetClientset returns the Kubernetes clientset for direct access
+func (s *Scanner) GetClientset() *kubernetes.Clientset {
+	return s.clientset
+}
