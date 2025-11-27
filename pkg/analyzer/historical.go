@@ -3,7 +3,6 @@ package analyzer
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/prometheus/client_golang/api"
@@ -75,7 +74,7 @@ func (h *HistoricalAnalyzer) queryCPUUsage(
 	query := fmt.Sprintf(
 		`rate(container_cpu_usage_seconds_total{namespace="%s",pod="%s",container!=""}[5m]) * 1000`,
 
-		namespace, podName, containerName,
+		namespace, podName,
 	)
 
 	r := v1.Range{
@@ -115,8 +114,7 @@ func (h *HistoricalAnalyzer) queryMemoryUsage(
 
 	query := fmt.Sprintf(
 		`container_memory_working_set_bytes{namespace="%s",pod="%s",container!=""}`,
-
-		namespace, podName, containerName,
+		namespace, podName,
 	)
 
 	r := v1.Range{
@@ -146,7 +144,7 @@ func (h *HistoricalAnalyzer) queryMemoryUsage(
 	return samples, nil
 }
 
-// parsePrometheusResult converts Prometheus result to our MetricSample format
+// parsePrometheusResult converts Prometheus query result to MetricSample array
 func parsePrometheusResult(result model.Value) ([]MetricSample, error) {
 	matrix, ok := result.(model.Matrix)
 	if !ok {
@@ -157,19 +155,17 @@ func parsePrometheusResult(result model.Value) ([]MetricSample, error) {
 		return nil, fmt.Errorf("no data in prometheus result")
 	}
 
-	series := matrix[0]
+	var samples []MetricSample
 
-	samples := make([]MetricSample, 0, len(series.Values))
-	for _, value := range series.Values {
-		samples = append(samples, MetricSample{
-			Timestamp: value.Timestamp.Time(),
-			Value:     float64(value.Value),
-		})
+	// Aggregate all series (multiple containers in a pod)
+	for _, series := range matrix {
+		for _, value := range series.Values {
+			samples = append(samples, MetricSample{
+				Timestamp: value.Timestamp.Time(),
+				Value:     float64(value.Value),
+			})
+		}
 	}
-
-	sort.Slice(samples, func(i, j int) bool {
-		return samples[i].Timestamp.Before(samples[j].Timestamp)
-	})
 
 	return samples, nil
 }
