@@ -302,6 +302,25 @@ kubectl wait --for=condition=ready pod \
     -n monitoring \
     --timeout=300s
 
+print_status "Configuring Prometheus to scrape all namespaces..."
+
+# Patch kubelet ServiceMonitor to include common namespaces
+for ns in "cost-test" "default" "monitoring"; do
+    kubectl patch servicemonitor prometheus-kube-prometheus-kubelet -n monitoring \
+        --type='json' \
+        -p="[{\"op\": \"add\", \"path\": \"/spec/namespaceSelector/matchNames/-\", \"value\": \"$ns\"}]" \
+        2>/dev/null || true
+done
+
+# Configure Prometheus to auto-discover all ServiceMonitors/PodMonitors
+kubectl patch prometheus prometheus-kube-prometheus-prometheus -n monitoring --type merge -p '
+spec:
+  podMonitorNamespaceSelector: {}
+  serviceMonitorNamespaceSelector: {}
+' 2>/dev/null || true
+
+print_status "✓ Prometheus configured for multi-namespace scraping"
+
 print_status "✓ Environment setup complete!"
 echo ""
 echo "Cluster Information:"

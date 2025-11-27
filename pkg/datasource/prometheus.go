@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/opscart/k8s-cost-optimizer/pkg/analyzer"
 	"github.com/opscart/k8s-cost-optimizer/pkg/models"
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -12,12 +13,13 @@ import (
 )
 
 type PrometheusSource struct {
-	client v1.API
-	url    string
+	apiClient api.Client
+	client    v1.API
+	url       string
 }
 
 func NewPrometheusSource(url string) (*PrometheusSource, error) {
-	client, err := api.NewClient(api.Config{
+	apiClient, err := api.NewClient(api.Config{
 		Address: url,
 	})
 	if err != nil {
@@ -25,25 +27,26 @@ func NewPrometheusSource(url string) (*PrometheusSource, error) {
 	}
 
 	return &PrometheusSource{
-		client: v1.NewAPI(client),
-		url:    url,
+		apiClient: apiClient,            // Store base client
+		client:    v1.NewAPI(apiClient), // Create v1 API from base client
+		url:       url,
 	}, nil
 }
 
 // GetMetrics retrieves comprehensive metrics for a workload
 func (p *PrometheusSource) GetMetrics(ctx context.Context, workload *models.Workload, duration time.Duration) (*models.Metrics, error) {
 	now := time.Now()
-	
+
 	// Try historical queries first, fall back to instant if needed
 	p95CPU, p99CPU, maxCPU, avgCPU := p.getCPUMetrics(ctx, workload, duration)
 	p95Mem, p99Mem, maxMem, avgMem := p.getMemoryMetrics(ctx, workload, duration)
-	
+
 	// Get requests from kube-state-metrics
 	reqCPU, reqMem, err := p.queryRequests(ctx, workload)
 	if err != nil {
 		fmt.Printf("[WARN] Failed to query resource requests: %v\n", err)
 	}
-	
+
 	return &models.Metrics{
 		P95CPU:          int64(p95CPU * 1000), // Convert to millicores
 		P99CPU:          int64(p99CPU * 1000),
@@ -70,25 +73,25 @@ func (p *PrometheusSource) getCPUMetrics(ctx context.Context, workload *models.W
 		instant, _ := p.queryInstantCPU(ctx, workload)
 		p95 = instant
 	}
-	
+
 	// Try P99
 	p99, err = p.queryP99CPU(ctx, workload, duration)
 	if err != nil || p99 == 0 {
 		p99 = p95 * 1.05 // 5% higher than P95
 	}
-	
+
 	// Try Max
 	max, err = p.queryMaxCPU(ctx, workload, duration)
 	if err != nil || max == 0 {
 		max = p99 * 1.1 // 10% higher than P99
 	}
-	
+
 	// Try Avg
 	avg, err = p.queryAvgCPU(ctx, workload, duration)
 	if err != nil || avg == 0 {
 		avg = p95 * 0.7 // Typically 70% of P95
 	}
-	
+
 	return p95, p99, max, avg
 }
 
@@ -102,25 +105,25 @@ func (p *PrometheusSource) getMemoryMetrics(ctx context.Context, workload *model
 		instant, _ := p.queryInstantMemory(ctx, workload)
 		p95 = instant
 	}
-	
+
 	// Try P99
 	p99, err = p.queryP99Memory(ctx, workload, duration)
 	if err != nil || p99 == 0 {
 		p99 = p95 * 1.05
 	}
-	
+
 	// Try Max
 	max, err = p.queryMaxMemory(ctx, workload, duration)
 	if err != nil || max == 0 {
 		max = p99 * 1.1
 	}
-	
+
 	// Try Avg
 	avg, err = p.queryAvgMemory(ctx, workload, duration)
 	if err != nil || avg == 0 {
 		avg = p95 * 0.8
 	}
-	
+
 	return p95, p99, max, avg
 }
 
@@ -132,7 +135,7 @@ func (p *PrometheusSource) queryP95CPU(ctx context.Context, workload *models.Wor
 		workload.Pod,
 		formatDuration(duration),
 	)
-	
+
 	return p.querySingleSum(ctx, query)
 }
 
@@ -144,7 +147,7 @@ func (p *PrometheusSource) queryP99CPU(ctx context.Context, workload *models.Wor
 		workload.Pod,
 		formatDuration(duration),
 	)
-	
+
 	return p.querySingleSum(ctx, query)
 }
 
@@ -156,7 +159,7 @@ func (p *PrometheusSource) queryMaxCPU(ctx context.Context, workload *models.Wor
 		workload.Pod,
 		formatDuration(duration),
 	)
-	
+
 	return p.querySingleSum(ctx, query)
 }
 
@@ -168,7 +171,7 @@ func (p *PrometheusSource) queryAvgCPU(ctx context.Context, workload *models.Wor
 		workload.Pod,
 		formatDuration(duration),
 	)
-	
+
 	return p.querySingleSum(ctx, query)
 }
 
@@ -180,7 +183,7 @@ func (p *PrometheusSource) queryP95Memory(ctx context.Context, workload *models.
 		workload.Pod,
 		formatDuration(duration),
 	)
-	
+
 	return p.querySingleSum(ctx, query)
 }
 
@@ -192,7 +195,7 @@ func (p *PrometheusSource) queryP99Memory(ctx context.Context, workload *models.
 		workload.Pod,
 		formatDuration(duration),
 	)
-	
+
 	return p.querySingleSum(ctx, query)
 }
 
@@ -204,7 +207,7 @@ func (p *PrometheusSource) queryMaxMemory(ctx context.Context, workload *models.
 		workload.Pod,
 		formatDuration(duration),
 	)
-	
+
 	return p.querySingleSum(ctx, query)
 }
 
@@ -216,7 +219,7 @@ func (p *PrometheusSource) queryAvgMemory(ctx context.Context, workload *models.
 		workload.Pod,
 		formatDuration(duration),
 	)
-	
+
 	return p.querySingleSum(ctx, query)
 }
 
@@ -227,7 +230,7 @@ func (p *PrometheusSource) queryInstantCPU(ctx context.Context, workload *models
 		workload.Namespace,
 		workload.Pod,
 	)
-	
+
 	return p.querySingleSum(ctx, query)
 }
 
@@ -238,7 +241,7 @@ func (p *PrometheusSource) queryInstantMemory(ctx context.Context, workload *mod
 		workload.Namespace,
 		workload.Pod,
 	)
-	
+
 	return p.querySingleSum(ctx, query)
 }
 
@@ -254,7 +257,7 @@ func (p *PrometheusSource) queryRequests(ctx context.Context, workload *models.W
 	if err != nil {
 		return 0, 0, err
 	}
-	
+
 	// Memory requests
 	memQuery := fmt.Sprintf(
 		`kube_pod_container_resource_requests{namespace="%s",pod="%s",resource="memory"}`,
@@ -265,7 +268,7 @@ func (p *PrometheusSource) queryRequests(ctx context.Context, workload *models.W
 	if err != nil {
 		return 0, 0, err
 	}
-	
+
 	return cpu, memory, nil
 }
 
@@ -275,22 +278,22 @@ func (p *PrometheusSource) querySingleSum(ctx context.Context, query string) (fl
 	if err != nil {
 		return 0, fmt.Errorf("query failed: %w", err)
 	}
-	
+
 	if len(warnings) > 0 {
 		fmt.Printf("[WARN] Prometheus: %v\n", warnings)
 	}
-	
+
 	vector, ok := result.(model.Vector)
 	if !ok || len(vector) == 0 {
 		return 0, nil // Return 0, not error - let caller handle
 	}
-	
+
 	// Sum all values (for pods with multiple containers)
 	sum := 0.0
 	for _, sample := range vector {
 		sum += float64(sample.Value)
 	}
-	
+
 	return sum, nil
 }
 
@@ -320,4 +323,14 @@ func (p *PrometheusSource) IsAvailable(ctx context.Context) bool {
 
 func (p *PrometheusSource) Name() string {
 	return "Prometheus"
+}
+
+// This allows other packages to create their own analyzers without circular imports
+func (p *PrometheusSource) GetClient() api.Client {
+	return p.apiClient // Return base client, not v1 API
+}
+
+// GetHistoricalAnalyzer returns an analyzer for historical queries
+func (p *PrometheusSource) GetHistoricalAnalyzer() *analyzer.HistoricalAnalyzer {
+	return analyzer.NewHistoricalAnalyzer(p.apiClient) // Use base client
 }

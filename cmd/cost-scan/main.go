@@ -10,6 +10,7 @@ import (
 	"github.com/opscart/k8s-cost-optimizer/pkg/analyzer"
 	"github.com/opscart/k8s-cost-optimizer/pkg/config"
 	"github.com/opscart/k8s-cost-optimizer/pkg/converter"
+	"github.com/opscart/k8s-cost-optimizer/pkg/datasource"
 	"github.com/opscart/k8s-cost-optimizer/pkg/executor"
 	"github.com/opscart/k8s-cost-optimizer/pkg/models"
 	"github.com/opscart/k8s-cost-optimizer/pkg/pricing"
@@ -156,24 +157,20 @@ func runScan(cmd *cobra.Command, args []string) {
 
 	ctx := context.Background()
 
-	// Try to use Prometheus if enabled
-	var promAnalyzer *analyzer.PrometheusAnalyzer
-	metricsSource := "metrics-server (instant snapshots)"
+	// Initialize Prometheus datasource if enabled
+	var promDS *datasource.PrometheusSource
+	var metricsSource string = "metrics-server (instant)" // Default
 
 	if usePrometheus && cfg.PrometheusURL != "" {
-		promAnalyzer, err = analyzer.NewPrometheusAnalyzer(
-			scan.GetClientset(),
-			cfg.PrometheusURL,
-			cfg,
-		)
+		promDS, err = datasource.NewPrometheusSource(cfg.PrometheusURL)
 
 		if err != nil {
 			if outputFormat != "commands" {
 				fmt.Printf("[WARN] Prometheus initialization failed: %v\n", err)
 				fmt.Println("[INFO] Falling back to metrics-server")
 			}
-			promAnalyzer = nil
-		} else if promAnalyzer.IsAvailable(ctx) {
+			promDS = nil
+		} else if promDS.IsAvailable(ctx) {
 			metricsSource = fmt.Sprintf("Prometheus P95/P99 (%d days lookback)", cfg.MetricsLookbackDays)
 			if outputFormat != "commands" {
 				fmt.Printf("[INFO] Using Prometheus at %s\n", cfg.PrometheusURL)
@@ -184,7 +181,7 @@ func runScan(cmd *cobra.Command, args []string) {
 			if outputFormat != "commands" {
 				fmt.Println("[WARN] Prometheus not reachable, falling back to metrics-server")
 			}
-			promAnalyzer = nil
+			promDS = nil
 		}
 	} else if usePrometheus && cfg.PrometheusURL == "" {
 		if outputFormat != "commands" {
@@ -192,6 +189,9 @@ func runScan(cmd *cobra.Command, args []string) {
 			fmt.Println("[INFO] Set PROMETHEUS_URL environment variable to enable Prometheus")
 		}
 	}
+
+	// Historical analyzer will be integrated in Week 6 Day 4-5
+	// For now, standard metrics flow continues below
 
 	// Cloud provider - use flags if provided, otherwise auto-detect
 	detectedProvider := provider
@@ -223,12 +223,12 @@ func runScan(cmd *cobra.Command, args []string) {
 		DefaultMemory: 3.0,
 	}
 
-	priceProvider, err := pricing.NewProvider(ctx, scan.GetClientset(), pricingConfig)
+	_, err = pricing.NewProvider(ctx, scan.GetClientset(), pricingConfig)
 	if err != nil {
 		if outputFormat != "commands" {
 			fmt.Printf("[WARN] Pricing provider failed: %v, using defaults\n", err)
 		}
-		priceProvider = pricing.NewDefaultProvider(23.0, 3.0)
+		_ = pricing.NewDefaultProvider(23.0, 3.0)
 	}
 
 	// Get version info
@@ -243,41 +243,22 @@ func runScan(cmd *cobra.Command, args []string) {
 		fmt.Printf("[INFO] Scanning namespace: %s\n", namespace)
 	}
 
-	// Scan using Prometheus or fallback to metrics-server
 	var oldRecommendations []*recommender.Recommendation
 
-	if promAnalyzer != nil {
-		// Use Prometheus P95/P99 metrics
-		analyses, err := promAnalyzer.AnalyzePodsWithPrometheus(ctx, namespace)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error analyzing with Prometheus: %v\n", err)
-			os.Exit(1)
+	if promDS != nil {
+		// TODO Week 6 Day 4-5: Integrate historical analyzer here
+		// For now, fall through to standard metrics-server scan
+		if outputFormat != "commands" {
+			fmt.Println("[INFO] Prometheus connected but historical analysis not yet integrated")
+			fmt.Println("[INFO] Using standard metrics-server scan for now")
 		}
+	}
 
-		if len(analyses) == 0 {
-			if outputFormat != "commands" {
-				fmt.Println("[INFO] No pods found in namespace")
-			}
-			return
-		}
-
-		// Group by deployment and generate recommendations
-		deploymentPods := groupPodsByDeployment(analyses)
-		rec := recommender.NewWithPricing(priceProvider)
-
-		for deploymentName, pods := range deploymentPods {
-			recommendation := rec.Analyze(pods, deploymentName)
-			if recommendation != nil {
-				oldRecommendations = append(oldRecommendations, recommendation)
-			}
-		}
-	} else {
-		// Fallback to old scanner method with metrics-server
-		oldRecommendations, err = scan.ScanAndRecommend(namespace, allNamespaces)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error scanning cluster: %v\n", err)
-			os.Exit(1)
-		}
+	// Standard scan (works for both metrics-server and basic Prometheus)
+	oldRecommendations, err = scan.ScanAndRecommend(namespace, allNamespaces)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error scanning cluster: %v\n", err)
+		os.Exit(1)
 	}
 
 	if len(oldRecommendations) == 0 {
