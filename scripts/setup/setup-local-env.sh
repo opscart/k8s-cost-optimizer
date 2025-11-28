@@ -280,6 +280,60 @@ else
     exit 1
 fi
 
+print_status "Creating HPA-enabled workload for testing..."
+
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-autoscaled
+  namespace: cost-test
+  labels:
+    app: api-autoscaled
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-autoscaled
+  template:
+    metadata:
+      labels:
+        app: api-autoscaled
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-autoscaled-hpa
+  namespace: cost-test
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-autoscaled
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+EOF
+
+print_status "✓ HPA-enabled workload created"
+
 # Install Prometheus stack
 print_status "Installing Prometheus Stack..."
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true

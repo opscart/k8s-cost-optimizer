@@ -47,6 +47,7 @@ func OldToNew(old *recommender.Recommendation, clusterID string) *models.Recomme
 	return &models.Recommendation{
 		Type:              recType,
 		Workload:          workload,
+		Environment:       old.Environment,
 		CurrentCPU:        old.CurrentCPU,
 		CurrentMemory:     old.CurrentMemory,
 		RecommendedCPU:    old.RecommendedCPU,
@@ -68,13 +69,33 @@ func generateCommand(rec *recommender.Recommendation) string {
 	cpuStr := fmt.Sprintf("%dm", rec.RecommendedCPU)
 	memStr := fmt.Sprintf("%dMi", rec.RecommendedMemory/(1024*1024))
 
+	// Get workload resource type
+	resourceType := getResourceType(rec.WorkloadType)
+
 	return fmt.Sprintf(
-		"kubectl set resources deployment %s -n %s --requests=cpu=%s,memory=%s",
+		"kubectl set resources %s %s -n %s --requests=cpu=%s,memory=%s",
+		resourceType, // Changed from hardcoded "deployment"
 		rec.DeploymentName,
 		rec.Namespace,
 		cpuStr,
 		memStr,
 	)
+}
+
+// getResourceType converts workload type to kubectl resource type
+func getResourceType(workloadType string) string {
+	switch workloadType {
+	case "StatefulSet":
+		return "statefulset"
+	case "DaemonSet":
+		return "daemonset"
+	case "ReplicaSet":
+		return "replicaset"
+	case "Deployment":
+		return "deployment"
+	default:
+		return "deployment" // default fallback
+	}
 }
 
 // PodAnalysisToWorkload converts analyzer.PodAnalysis to models.Workload

@@ -268,6 +268,19 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 # Clone and build
 git clone https://github.com/opscart/k8s-cost-optimizer.git
 cd k8s-cost-optimizer
+
+# 1. Create local cluster with monitoring
+./scripts/setup/setup-local-env.sh
+
+# 2. Deploy basic test workloads
+./scripts/setup/deploy-test-workloads.sh
+
+# 3. Deploy advanced workloads (StatefulSets, DaemonSets, HPAs)
+./scripts/setup/deploy-advanced-workloads.sh
+
+# 4. Deploy multi-environment workloads (prod/staging/dev)
+./scripts/setup/deploy-multi-env-workloads.sh
+
 go mod download
 go build ./...
 

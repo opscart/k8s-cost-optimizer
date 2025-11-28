@@ -13,9 +13,10 @@ const (
 
 // Recommendation represents an optimization recommendation
 type Recommendation struct {
-	ID       string
-	Type     RecommendationType
-	Workload *Workload
+	ID          string
+	Type        RecommendationType
+	Workload    *Workload
+	Environment string
 
 	// Current state
 	CurrentCPU    int64

@@ -20,6 +20,8 @@ type Recommendation struct {
 	Type              RecommendationType
 	DeploymentName    string
 	Namespace         string
+	WorkloadType      string
+	Environment       string
 	CurrentCPU        int64
 	CurrentMemory     int64
 	RecommendedCPU    int64
@@ -59,9 +61,51 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 		return nil
 	}
 
+	// Get workload type and environment EARLY (needed by all paths)
+	workloadType := analyses[0].WorkloadType
+	if workloadType == "" {
+		workloadType = "Deployment"
+	}
+
+	environment := string(analyses[0].Environment)
+	if environment == "" {
+		environment = string(analyzer.EnvironmentUnknown)
+	}
+
+	workloadConfig := analyzer.GetWorkloadConfig(analyzer.WorkloadType(workloadType))
+
+	// Use COMBINED safety buffer (workload × environment)
+	safetyBuffer := analyzer.GetCombinedSafetyBuffer(
+		analyzer.WorkloadType(workloadType),
+		analyzer.Environment(environment),
+	)
+
+	// Check if workload has HPA enabled - skip optimization
+	if analyses[0].HasHPA {
+		rec := &Recommendation{
+			Type:              NoAction,
+			DeploymentName:    deploymentName,
+			Namespace:         analyses[0].Namespace,
+			WorkloadType:      workloadType,
+			Environment:       environment,
+			Provider:          r.pricingProvider.Name(),
+			CurrentCPU:        0,
+			CurrentMemory:     0,
+			RecommendedCPU:    0,
+			RecommendedMemory: 0,
+			Reason:            fmt.Sprintf("⚠️  Workload managed by HPA '%s' - Auto-scaling enabled, manual optimization not recommended", analyses[0].HPAName),
+			Savings:           0,
+			Impact:            "N/A",
+			Risk:              "N/A",
+		}
+		return rec
+	}
+
 	rec := &Recommendation{
 		DeploymentName: deploymentName,
 		Namespace:      analyses[0].Namespace,
+		WorkloadType:   workloadType,
+		Environment:    environment,
 		Provider:       r.pricingProvider.Name(),
 	}
 
@@ -84,24 +128,40 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 	rec.CurrentCPU = avgRequestedCPU
 	rec.CurrentMemory = avgRequestedMem
 
+	// Check if workload type should be optimized
+	if !workloadConfig.OptimizeEnabled {
+		rec.Type = NoAction
+		rec.Environment = environment
+		rec.Reason = fmt.Sprintf("Workload type %s (%s) - optimization disabled for safety",
+			workloadType, workloadConfig.Description)
+		rec.RecommendedCPU = avgRequestedCPU
+		rec.RecommendedMemory = avgRequestedMem
+		rec.Risk = workloadConfig.RiskLevel
+		rec.Impact = "N/A"
+		rec.Savings = 0
+		return rec
+	}
+
 	// Check if workload is idle (< 5% CPU usage)
 	cpuUtil := float64(avgActualCPU) / float64(avgRequestedCPU)
 	if cpuUtil < 0.05 {
 		rec.Type = ScaleDown
-		rec.Reason = fmt.Sprintf("Workload appears idle (%.1f%% CPU utilization)", cpuUtil*100)
+		rec.Environment = environment
+		rec.Reason = fmt.Sprintf("Workload appears idle (%.1f%% CPU utilization) - Workload: %s, Environment: %s",
+			cpuUtil*100, workloadType, environment)
 		rec.RecommendedCPU = 0
 		rec.RecommendedMemory = 0
 		rec.Impact = "HIGH"
-		rec.Risk = "MEDIUM"
+		rec.Risk = workloadConfig.RiskLevel
 
 		rec.Savings = r.calculateMonthlyCost(ctx, avgRequestedCPU, avgRequestedMem) * float64(len(analyses))
 
 		return rec
 	}
 
-	// Calculate recommended resources with safety buffer
-	recCPU := int64(float64(avgActualCPU) * r.safetyBuffer)
-	recMem := int64(float64(avgActualMem) * r.safetyBuffer)
+	// Calculate recommended resources with combined safety buffer
+	recCPU := int64(float64(avgActualCPU) * safetyBuffer)
+	recMem := int64(float64(avgActualMem) * safetyBuffer)
 
 	// Minimum thresholds
 	if recCPU < 10 {
@@ -119,8 +179,11 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 		rec.Type = RightSize
 		rec.RecommendedCPU = recCPU
 		rec.RecommendedMemory = recMem
-		rec.Reason = fmt.Sprintf("Over-provisioned: %.0f%% CPU, %.0f%% memory reduction possible",
-			cpuReduction, memReduction)
+		rec.Environment = environment
+
+		// Include environment context in reason
+		rec.Reason = fmt.Sprintf("Over-provisioned: CPU %.0f%% under-utilized, Memory %.0f%% under-utilized (Workload: %s, Safety: %.1fx, Env: %s)",
+			cpuReduction, memReduction, workloadType, safetyBuffer, environment)
 
 		currentCost := r.calculateMonthlyCost(ctx, avgRequestedCPU, avgRequestedMem) * float64(len(analyses))
 		newCost := r.calculateMonthlyCost(ctx, recCPU, recMem) * float64(len(analyses))
@@ -143,14 +206,14 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 			rec.Impact = "LOW"
 		}
 
-		// Risk assessment based on reduction percentage
+		// Risk assessment
 		avgReduction := (cpuReduction + memReduction) / 2
 		if avgReduction > 75 {
 			rec.Risk = "HIGH"
 		} else if avgReduction > 50 {
 			rec.Risk = "MEDIUM"
 		} else {
-			rec.Risk = "LOW"
+			rec.Risk = workloadConfig.RiskLevel
 		}
 
 		return rec
@@ -158,6 +221,7 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 
 	// No action needed
 	rec.Type = NoAction
+	rec.Environment = environment
 	rec.Reason = "Resource allocation is appropriate"
 	rec.RecommendedCPU = avgRequestedCPU
 	rec.RecommendedMemory = avgRequestedMem

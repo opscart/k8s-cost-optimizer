@@ -90,44 +90,126 @@ func (s *Scanner) ScanAndRecommend(namespace string, allNamespaces bool) ([]*rec
 }
 
 func (s *Scanner) scanNamespace(ctx context.Context, namespace string) ([]*recommender.Recommendation, error) {
+	// Get all workload types
 	deployments, err := s.clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list deployments: %w", err)
 	}
 
-	if len(deployments.Items) == 0 {
-		return nil, nil
+	statefulSets, err := s.clientset.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list statefulsets: %w", err)
 	}
 
+	daemonSets, err := s.clientset.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list daemonsets: %w", err)
+	}
+
+	replicaSets, err := s.clientset.AppsV1().ReplicaSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list replicasets: %w", err)
+	}
+
+	// Get pod analyses
 	analyses, err := s.analyzer.AnalyzePods(ctx, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze pods: %w", err)
 	}
 
-	deploymentPods := make(map[string][]analyzer.PodAnalysis)
+	// Group pods by their parent workload
+	workloadPods := make(map[string][]analyzer.PodAnalysis)
+
 	for _, analysis := range analyses {
-		for _, deploy := range deployments.Items {
-			if len(analysis.Name) > len(deploy.Name) && analysis.Name[:len(deploy.Name)] == deploy.Name {
-				deploymentPods[deploy.Name] = append(deploymentPods[deploy.Name], analysis)
-				break
-			}
+		// Use the workload name from the analysis (already extracted in analyzer)
+		workloadKey := analysis.WorkloadName
+		if workloadKey == "" {
+			// Fallback: try to extract from pod name
+			workloadKey = extractWorkloadName(analysis.Name)
+		}
+
+		if workloadKey != "" {
+			workloadPods[workloadKey] = append(workloadPods[workloadKey], analysis)
 		}
 	}
 
 	var recommendations []*recommender.Recommendation
 
-	for deployName, pods := range deploymentPods {
-		if len(pods) == 0 {
+	// Generate recommendations for Deployments
+	for _, deploy := range deployments.Items {
+		if pods, exists := workloadPods[deploy.Name]; exists && len(pods) > 0 {
+			rec := s.recommender.Analyze(pods, deploy.Name)
+			if rec != nil {
+				recommendations = append(recommendations, rec)
+			}
+		}
+	}
+
+	// Generate recommendations for StatefulSets
+	for _, sts := range statefulSets.Items {
+		if pods, exists := workloadPods[sts.Name]; exists && len(pods) > 0 {
+			rec := s.recommender.Analyze(pods, sts.Name)
+			if rec != nil {
+				recommendations = append(recommendations, rec)
+			}
+		}
+	}
+
+	// Generate recommendations for DaemonSets
+	for _, ds := range daemonSets.Items {
+		if pods, exists := workloadPods[ds.Name]; exists && len(pods) > 0 {
+			rec := s.recommender.Analyze(pods, ds.Name)
+			if rec != nil {
+				recommendations = append(recommendations, rec)
+			}
+		}
+	}
+
+	// Generate recommendations for standalone ReplicaSets (not owned by Deployments)
+	for _, rs := range replicaSets.Items {
+		// Skip ReplicaSets owned by Deployments (already handled above)
+		if len(rs.OwnerReferences) > 0 && rs.OwnerReferences[0].Kind == "Deployment" {
 			continue
 		}
 
-		rec := s.recommender.Analyze(pods, deployName)
-		if rec != nil {
-			recommendations = append(recommendations, rec)
+		if pods, exists := workloadPods[rs.Name]; exists && len(pods) > 0 {
+			rec := s.recommender.Analyze(pods, rs.Name)
+			if rec != nil {
+				recommendations = append(recommendations, rec)
+			}
 		}
 	}
 
 	return recommendations, nil
+}
+
+// extractWorkloadName extracts workload name from pod name
+// Handles formats like: "workload-name-7d9f8b-xyz" (Deployment) or "workload-name-0" (StatefulSet)
+func extractWorkloadName(podName string) string {
+	// For StatefulSets: "postgres-test-0" -> "postgres-test"
+	// For Deployments: "api-server-7d9f8b-xyz" -> "api-server"
+
+	// Try StatefulSet pattern first (ends with -<number>)
+	if len(podName) > 2 && podName[len(podName)-2] == '-' {
+		// Check if last char is a digit
+		lastChar := podName[len(podName)-1]
+		if lastChar >= '0' && lastChar <= '9' {
+			return podName[:len(podName)-2]
+		}
+	}
+
+	// Try Deployment pattern (remove last two dash-separated segments)
+	dashCount := 0
+	for i := len(podName) - 1; i >= 0; i-- {
+		if podName[i] == '-' {
+			dashCount++
+			if dashCount == 2 {
+				return podName[:i]
+			}
+		}
+	}
+
+	return podName
 }
 
 // GetAnalyzer returns the analyzer for direct use

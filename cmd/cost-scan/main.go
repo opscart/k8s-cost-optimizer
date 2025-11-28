@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/opscart/k8s-cost-optimizer/pkg/analyzer"
@@ -426,15 +427,26 @@ func outputText(recommendations []*models.Recommendation, totalSavings float64) 
 	fmt.Println("=== Optimization Recommendations ===\n")
 
 	for i, rec := range recommendations {
-		fmt.Printf("%d. %s/%s\n", i+1, rec.Workload.Namespace, rec.Workload.Deployment)
+		// Print workload name and environment badge on SAME line
+		fmt.Printf("%d. %s/%s", i+1, rec.Workload.Namespace, rec.Workload.Deployment)
+		if rec.Environment != "" && rec.Environment != "unknown" {
+			fmt.Printf(" [%s]", strings.ToUpper(rec.Environment))
+		}
+		fmt.Println() // Now move to next line
+
 		fmt.Printf("   Type: %s\n", rec.Type)
+		if rec.Reason != "" {
+			fmt.Printf("   Reason: %s\n", rec.Reason)
+		}
 		fmt.Printf("   Current:  CPU=%dm Memory=%dMi\n",
 			rec.CurrentCPU, rec.CurrentMemory/(1024*1024))
 		fmt.Printf("   Recommended: CPU=%dm Memory=%dMi\n",
 			rec.RecommendedCPU, rec.RecommendedMemory/(1024*1024))
 		fmt.Printf("   Savings: $%.2f/month\n", rec.SavingsMonthly)
 		fmt.Printf("   Risk: %s\n", rec.Risk)
-		fmt.Printf("   Command: %s\n", rec.Command)
+		if rec.Command != "" {
+			fmt.Printf("   Command: %s\n", rec.Command)
+		}
 		fmt.Println()
 	}
 
