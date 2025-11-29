@@ -47,3 +47,10 @@ docs/evaluation/notes-*.md
 
 # Private strategic notes
 .private/
+
+# Reports directory
+reports/
+*.html
+*.csv
+*.md
+!README.md

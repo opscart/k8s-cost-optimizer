@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/opscart/k8s-cost-optimizer/pkg/models"
 	"github.com/opscart/k8s-cost-optimizer/pkg/pricing"
 	"github.com/opscart/k8s-cost-optimizer/pkg/recommender"
+	"github.com/opscart/k8s-cost-optimizer/pkg/reporter"
 	"github.com/opscart/k8s-cost-optimizer/pkg/scanner"
 	"github.com/opscart/k8s-cost-optimizer/pkg/storage"
 	"github.com/spf13/cobra"
@@ -23,16 +25,19 @@ import (
 
 var (
 	// Scan flags
-	namespace     string
-	allNamespaces bool
-	outputFormat  string
-	saveResults   bool
-	clusterID     string
-	usePrometheus bool
-	provider      string
-	region        string
-	dryRun        bool
-	verbose       bool
+	namespace      string
+	allNamespaces  bool
+	outputFormat   string
+	saveResults    bool
+	clusterID      string
+	usePrometheus  bool
+	provider       string
+	region         string
+	dryRun         bool
+	verbose        bool
+	generateReport bool
+	reportFormat   string
+	reportOutput   string
 
 	// Global config
 	cfg   *config.Config
@@ -70,6 +75,9 @@ func main() {
 	rootCmd.Flags().StringVar(&region, "region", "", "Cloud region (e.g., eastus, us-east-1)")
 	rootCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show recommendations without saving")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging")
+	rootCmd.Flags().BoolVar(&generateReport, "generate-report", false, "Generate cost optimization report")
+	rootCmd.Flags().StringVar(&reportFormat, "report-format", "html", "Report format: html, markdown, csv")
+	rootCmd.Flags().StringVar(&reportOutput, "report-output", "cost-report.html", "Output file for report")
 
 	// History command
 	historyCmd := &cobra.Command{
@@ -303,6 +311,12 @@ func runScan(cmd *cobra.Command, args []string) {
 	default:
 		outputText(recommendations, totalSavings)
 	}
+	// Generate report if requested
+	if generateReport {
+		if err := generateCostReport(recommendations, totalSavings, namespace); err != nil {
+			fmt.Fprintf(os.Stderr, "[ERROR] Failed to generate report: %v\n", err)
+		}
+	}
 }
 
 // Helper function to group pod analyses by deployment
@@ -476,4 +490,87 @@ func outputCommands(recommendations []*recommender.Recommendation) {
 			fmt.Println(cmd)
 		}
 	}
+}
+
+func generateCostReport(recommendations []*models.Recommendation, totalSavings float64, namespace string) error {
+	rep := reporter.New(reporter.ReportFormat(reportFormat))
+
+	clusterName := clusterID
+	if clusterName == "" {
+		clusterName = "default"
+	}
+
+	report, err := rep.Generate(recommendations, clusterName, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to generate report: %w", err)
+	}
+
+	// Create reports directory if it doesn't exist
+	reportsDir := "reports"
+	if err := os.MkdirAll(reportsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create reports directory: %w", err)
+	}
+
+	// Generate filename with timestamp if not explicitly provided
+	outputFile := reportOutput
+	if reportOutput == "cost-report.html" || reportOutput == "" {
+		// Default filename with timestamp
+		timestamp := time.Now().Format("20060102-150405")
+		nsName := namespace
+		if nsName == "" {
+			nsName = "all-namespaces"
+		}
+
+		var ext string
+		switch reportFormat {
+		case "html":
+			ext = ".html"
+		case "markdown", "md":
+			ext = ".md"
+		case "csv":
+			ext = ".csv"
+		default:
+			ext = ".html"
+		}
+
+		outputFile = fmt.Sprintf("%s/cost-report-%s-%s%s", reportsDir, nsName, timestamp, ext)
+	} else {
+		// User provided custom filename - put it in reports dir unless it has a path
+		if !strings.Contains(outputFile, "/") {
+			outputFile = filepath.Join(reportsDir, outputFile)
+		}
+	}
+
+	// Create output file
+	file, err := os.Create(outputFile)
+	if err != nil {
+		return fmt.Errorf("failed to create report file: %w", err)
+	}
+	defer file.Close()
+
+	// Generate report based on format
+	switch reportFormat {
+	case "html":
+		if err := reporter.GenerateHTML(report, file); err != nil {
+			return fmt.Errorf("failed to write HTML report: %w", err)
+		}
+	case "markdown", "md":
+		if err := reporter.GenerateMarkdown(report, file); err != nil {
+			return fmt.Errorf("failed to write Markdown report: %w", err)
+		}
+	case "csv":
+		if err := reporter.GenerateCSV(report, file); err != nil {
+			return fmt.Errorf("failed to write CSV report: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported report format: %s", reportFormat)
+	}
+
+	fmt.Printf("\n[INFO] %s report generated: %s\n", strings.ToUpper(reportFormat), outputFile)
+	if reportFormat == "html" {
+		absPath, _ := filepath.Abs(outputFile)
+		fmt.Printf("[INFO] Open in browser: file://%s\n", absPath)
+	}
+
+	return nil
 }
