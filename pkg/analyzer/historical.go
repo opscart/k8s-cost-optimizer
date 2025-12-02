@@ -13,13 +13,15 @@ import (
 // HistoricalAnalyzer queries and analyzes historical metrics
 type HistoricalAnalyzer struct {
 	promAPI v1.API
+	verbose bool
 }
 
 // NewHistoricalAnalyzer creates a new analyzer with Prometheus API client
 // Pass the client from datasource, but don't import datasource package
-func NewHistoricalAnalyzer(promClient api.Client) *HistoricalAnalyzer {
+func NewHistoricalAnalyzer(promClient api.Client, verbose bool) *HistoricalAnalyzer {
 	return &HistoricalAnalyzer{
 		promAPI: v1.NewAPI(promClient),
+		verbose: verbose, // ADD THIS
 	}
 }
 
@@ -72,8 +74,7 @@ func (h *HistoricalAnalyzer) queryCPUUsage(
 ) ([]MetricSample, error) {
 
 	query := fmt.Sprintf(
-		`rate(container_cpu_usage_seconds_total{namespace="%s",pod="%s",container!=""}[5m]) * 1000`,
-
+		`container_cpu_usage_seconds_total{namespace="%s",pod="%s",container!="POD"}`,
 		namespace, podName,
 	)
 
@@ -83,13 +84,30 @@ func (h *HistoricalAnalyzer) queryCPUUsage(
 		Step:  step,
 	}
 
+	// Conditional debug output
+	if h.verbose {
+		fmt.Printf("[DEBUG] Prometheus CPU query: %s\n", query)
+		fmt.Printf("[DEBUG] Time range: %s to %s (step: %s)\n",
+			startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), step)
+	}
+
 	result, warnings, err := h.promAPI.QueryRange(ctx, query, r)
 	if err != nil {
 		return nil, fmt.Errorf("prometheus query failed: %w", err)
 	}
 
-	if len(warnings) > 0 {
-		fmt.Printf("Warnings from Prometheus: %v\n", warnings)
+	if len(warnings) > 0 && h.verbose {
+		fmt.Printf("[DEBUG] Prometheus warnings: %v\n", warnings)
+	}
+
+	if h.verbose {
+		fmt.Printf("[DEBUG] Result type: %T\n", result)
+		if matrix, ok := result.(model.Matrix); ok {
+			fmt.Printf("[DEBUG] Matrix length: %d\n", len(matrix))
+			if len(matrix) > 0 {
+				fmt.Printf("[DEBUG] First series has %d values\n", len(matrix[0].Values))
+			}
+		}
 	}
 
 	samples, err := parsePrometheusResult(result)
@@ -97,10 +115,18 @@ func (h *HistoricalAnalyzer) queryCPUUsage(
 		return nil, fmt.Errorf("failed to parse CPU results: %w", err)
 	}
 
-	if len(samples) == 0 {
-		return nil, fmt.Errorf("no CPU data found for pod %s/%s", namespace, podName)
+	// Convert counter to rate (millicores)
+	if len(samples) > 0 {
+		samples = calculateRateFromCounter(samples)
 	}
 
+	if len(samples) == 0 {
+		return []MetricSample{}, nil
+	}
+
+	if h.verbose {
+		fmt.Printf("[DEBUG] Parsed %d CPU samples\n", len(samples))
+	}
 	return samples, nil
 }
 
@@ -113,7 +139,7 @@ func (h *HistoricalAnalyzer) queryMemoryUsage(
 ) ([]MetricSample, error) {
 
 	query := fmt.Sprintf(
-		`container_memory_working_set_bytes{namespace="%s",pod="%s",container!=""}`,
+		`container_memory_working_set_bytes{namespace="%s",pod="%s",container!="POD"}`,
 		namespace, podName,
 	)
 
@@ -123,13 +149,17 @@ func (h *HistoricalAnalyzer) queryMemoryUsage(
 		Step:  step,
 	}
 
+	if h.verbose {
+		fmt.Printf("[DEBUG] Prometheus Memory query: %s\n", query)
+	}
+
 	result, warnings, err := h.promAPI.QueryRange(ctx, query, r)
 	if err != nil {
 		return nil, fmt.Errorf("prometheus query failed: %w", err)
 	}
 
-	if len(warnings) > 0 {
-		fmt.Printf("Warnings from Prometheus: %v\n", warnings)
+	if len(warnings) > 0 && h.verbose {
+		fmt.Printf("[DEBUG] Prometheus warnings: %v\n", warnings)
 	}
 
 	samples, err := parsePrometheusResult(result)
@@ -138,9 +168,12 @@ func (h *HistoricalAnalyzer) queryMemoryUsage(
 	}
 
 	if len(samples) == 0 {
-		return nil, fmt.Errorf("no memory data found for pod %s/%s", namespace, podName)
+		return []MetricSample{}, nil
 	}
 
+	if h.verbose {
+		fmt.Printf("[DEBUG] Parsed %d memory samples\n", len(samples))
+	}
 	return samples, nil
 }
 
@@ -151,8 +184,9 @@ func parsePrometheusResult(result model.Value) ([]MetricSample, error) {
 		return nil, fmt.Errorf("unexpected result type: %T", result)
 	}
 
+	// Allow empty matrix - return empty samples instead of error
 	if len(matrix) == 0 {
-		return nil, fmt.Errorf("no data in prometheus result")
+		return []MetricSample{}, nil // Changed from error to empty slice
 	}
 
 	var samples []MetricSample
@@ -168,4 +202,29 @@ func parsePrometheusResult(result model.Value) ([]MetricSample, error) {
 	}
 
 	return samples, nil
+}
+
+// calculateRateFromCounter converts CPU counter values to per-second rate in millicores
+func calculateRateFromCounter(samples []MetricSample) []MetricSample {
+	if len(samples) < 2 {
+		return samples
+	}
+
+	rates := make([]MetricSample, 0, len(samples)-1)
+
+	for i := 1; i < len(samples); i++ {
+		timeDiff := samples[i].Timestamp.Sub(samples[i-1].Timestamp).Seconds()
+		if timeDiff > 0 {
+			valueDiff := samples[i].Value - samples[i-1].Value
+			// Convert to millicores (rate per second * 1000)
+			rate := (valueDiff / timeDiff) * 1000
+
+			rates = append(rates, MetricSample{
+				Timestamp: samples[i].Timestamp,
+				Value:     rate,
+			})
+		}
+	}
+
+	return rates
 }

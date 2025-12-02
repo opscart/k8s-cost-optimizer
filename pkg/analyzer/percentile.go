@@ -148,3 +148,52 @@ func AnalyzeUsagePattern(samples []MetricSample) UsagePattern {
 		Confidence: confidence,
 	}
 }
+
+// CalculatePercentilesFromValues calculates percentiles from a slice of float64 values
+func CalculatePercentilesFromValues(values []float64) Percentiles {
+	if len(values) == 0 {
+		return Percentiles{}
+	}
+
+	// Sort values
+	sorted := make([]float64, len(values))
+	copy(sorted, values)
+	sort.Float64s(sorted)
+
+	// Calculate statistics
+	sum := 0.0
+	min := sorted[0]
+	max := sorted[len(sorted)-1]
+
+	for _, v := range sorted {
+		sum += v
+	}
+	avg := sum / float64(len(sorted))
+
+	return Percentiles{
+		Average: avg,
+		P50:     getPercentile(sorted, 0.50),
+		P90:     getPercentile(sorted, 0.90),
+		P95:     getPercentile(sorted, 0.95),
+		P99:     getPercentile(sorted, 0.99),
+		Peak:    max,
+		Min:     min,
+	}
+}
+
+// getPercentile gets the value at a given percentile (0.0 to 1.0)
+func getPercentile(sorted []float64, percentile float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+
+	index := int(float64(len(sorted)-1) * percentile)
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+
+	return sorted[index]
+}

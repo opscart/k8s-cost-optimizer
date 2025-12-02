@@ -332,5 +332,10 @@ func (p *PrometheusSource) GetClient() api.Client {
 
 // GetHistoricalAnalyzer returns an analyzer for historical queries
 func (p *PrometheusSource) GetHistoricalAnalyzer() *analyzer.HistoricalAnalyzer {
-	return analyzer.NewHistoricalAnalyzer(p.apiClient) // Use base client
+	return analyzer.NewHistoricalAnalyzer(p.apiClient, false) // Default to non-verbose
+}
+
+// GetAPIClient returns the underlying Prometheus API client
+func (p *PrometheusSource) GetAPIClient() api.Client {
+	return p.apiClient
 }

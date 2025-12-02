@@ -157,8 +157,8 @@ func runScan(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Initialize scanner
-	scan, err := scanner.New()
+	// Initialize scanner with verbose flag
+	scan, err := scanner.New(verbose)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing scanner: %v\n", err)
 		os.Exit(1)
@@ -255,19 +255,41 @@ func runScan(cmd *cobra.Command, args []string) {
 	var oldRecommendations []*recommender.Recommendation
 
 	if promDS != nil {
-		// TODO Week 6 Day 4-5: Integrate historical analyzer here
-		// For now, fall through to standard metrics-server scan
+		// Use historical analyzer with Prometheus
 		if outputFormat != "commands" {
-			fmt.Println("[INFO] Prometheus connected but historical analysis not yet integrated")
-			fmt.Println("[INFO] Using standard metrics-server scan for now")
+			fmt.Printf("[INFO] Using historical analysis (P95 over %d days)\n", cfg.MetricsLookbackDays)
 		}
-	}
 
-	// Standard scan (works for both metrics-server and basic Prometheus)
-	oldRecommendations, err = scan.ScanAndRecommend(namespace, allNamespaces)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error scanning cluster: %v\n", err)
-		os.Exit(1)
+		// Get the Prometheus API client
+		promClient := promDS.GetAPIClient()
+
+		oldRecommendations, err = scan.ScanAndRecommendWithHistory(
+			ctx,
+			namespace,
+			allNamespaces,
+			promClient,
+			cfg.MetricsLookbackDays,
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error scanning with historical data: %v\n", err)
+			fmt.Println("[INFO] Falling back to instant metrics")
+			// Fallback to standard scan
+			oldRecommendations, err = scan.ScanAndRecommend(namespace, allNamespaces)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error scanning cluster: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	} else {
+		// Standard scan with instant metrics
+		if outputFormat != "commands" {
+			fmt.Println("[INFO] Using instant metrics (Prometheus not available)")
+		}
+		oldRecommendations, err = scan.ScanAndRecommend(namespace, allNamespaces)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error scanning cluster: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	if len(oldRecommendations) == 0 {
