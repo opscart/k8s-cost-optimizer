@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/opscart/k8s-cost-optimizer/pkg/models"
 	_ "github.com/lib/pq"
+	"github.com/opscart/k8s-cost-optimizer/pkg/models"
 )
 
 //go:embed migrations/*.sql
@@ -385,4 +385,227 @@ func (s *PostgresStore) Ping(ctx context.Context) error {
 // Close closes the database connection
 func (s *PostgresStore) Close() error {
 	return s.db.Close()
+}
+
+// GetSavingsTrend returns cost savings trend over time
+func (s *PostgresStore) GetSavingsTrend(ctx context.Context, namespace string, days int) (*models.SavingsTrend, error) {
+	query := `
+		SELECT 
+			DATE_TRUNC('day', created_at) as date,
+			COUNT(*) as recommendation_count,
+			COALESCE(SUM(savings_monthly_usd), 0) as potential_savings,
+			COUNT(CASE WHEN applied_at IS NOT NULL THEN 1 END) as applied_count,
+			COALESCE(SUM(CASE WHEN applied_at IS NOT NULL THEN savings_monthly_usd ELSE 0 END), 0) as realized_savings
+		FROM recommendations
+		WHERE namespace = $1
+			AND created_at >= NOW() - make_interval(days => $2)
+		GROUP BY DATE_TRUNC('day', created_at)
+		ORDER BY date DESC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, namespace, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	trend := &models.SavingsTrend{
+		Namespace:  namespace,
+		Days:       days,
+		DataPoints: []models.SavingsDataPoint{},
+	}
+
+	var totalPotential, totalRealized float64
+	var totalRecs, totalApplied int
+
+	for rows.Next() {
+		var dp models.SavingsDataPoint
+		err := rows.Scan(
+			&dp.Date,
+			&dp.RecommendationCount,
+			&dp.PotentialSavings,
+			&dp.AppliedCount,
+			&dp.RealizedSavings,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		totalPotential += dp.PotentialSavings
+		totalRealized += dp.RealizedSavings
+		totalRecs += dp.RecommendationCount
+		totalApplied += dp.AppliedCount
+
+		trend.DataPoints = append(trend.DataPoints, dp)
+	}
+
+	trend.TotalPotentialSavings = totalPotential
+	trend.TotalRealizedSavings = totalRealized
+	trend.TotalRecommendations = totalRecs
+	trend.TotalApplied = totalApplied
+
+	if totalRecs > 0 {
+		trend.AdoptionRate = float64(totalApplied) / float64(totalRecs) * 100
+	}
+
+	return trend, rows.Err()
+}
+
+// GetWorkloadHistory returns recommendation history for a specific workload
+func (s *PostgresStore) GetWorkloadHistory(ctx context.Context, namespace, deployment string, limit int) ([]*models.Recommendation, error) {
+	query := `
+		SELECT id, cluster_id, namespace, deployment, pod, container,
+			type, current_cpu_millicores, current_memory_bytes,
+			recommended_cpu_millicores, recommended_memory_bytes,
+			reason, savings_monthly_usd, impact, risk, command,
+			created_at, applied_at, applied_by
+		FROM recommendations
+		WHERE namespace = $1 AND deployment = $2
+		ORDER BY created_at DESC
+		LIMIT $3
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, namespace, deployment, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var recommendations []*models.Recommendation
+	for rows.Next() {
+		var rec models.Recommendation
+		var workload models.Workload
+		var appliedAt sql.NullTime
+		var deployment, container, appliedBy sql.NullString
+
+		err := rows.Scan(
+			&rec.ID, &workload.ClusterID, &workload.Namespace,
+			&deployment, &workload.Pod, &container,
+			&rec.Type, &rec.CurrentCPU, &rec.CurrentMemory,
+			&rec.RecommendedCPU, &rec.RecommendedMemory,
+			&rec.Reason, &rec.SavingsMonthly, &rec.Impact, &rec.Risk, &rec.Command,
+			&rec.CreatedAt, &appliedAt, &appliedBy,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		workload.Deployment = deployment.String
+		workload.Container = container.String
+		rec.Workload = &workload
+
+		if appliedAt.Valid {
+			rec.AppliedAt = &appliedAt.Time
+		}
+		if appliedBy.Valid {
+			rec.AppliedBy = appliedBy.String
+		}
+
+		recommendations = append(recommendations, &rec)
+	}
+
+	return recommendations, rows.Err()
+}
+
+// GetDashboardStats returns aggregate statistics for dashboard
+func (s *PostgresStore) GetDashboardStats(ctx context.Context, namespace string, days int) (*models.DashboardStats, error) {
+	query := `
+		SELECT 
+			COUNT(*) as total_recommendations,
+			COUNT(CASE WHEN applied_at IS NOT NULL THEN 1 END) as applied_count,
+			COALESCE(SUM(savings_monthly_usd), 0) as potential_savings,
+			COALESCE(SUM(CASE WHEN applied_at IS NOT NULL THEN savings_monthly_usd ELSE 0 END), 0) as realized_savings,
+			COUNT(DISTINCT deployment) as unique_workloads,
+			COALESCE(AVG(savings_monthly_usd), 0) as avg_savings_per_recommendation
+		FROM recommendations
+		WHERE namespace = $1
+			AND created_at >= NOW() - make_interval(days => $2)
+	`
+
+	var stats models.DashboardStats
+	var appliedCount, uniqueWorkloads int
+	var avgSavings float64
+
+	err := s.db.QueryRowContext(ctx, query, namespace, days).Scan(
+		&stats.TotalRecommendations,
+		&appliedCount,
+		&stats.PotentialSavings,
+		&stats.RealizedSavings,
+		&uniqueWorkloads,
+		&avgSavings,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	stats.AppliedCount = appliedCount
+	stats.UniqueWorkloads = uniqueWorkloads
+	stats.Namespace = namespace
+	stats.PeriodDays = days
+	stats.AvgSavingsPerRecommendation = avgSavings
+
+	if stats.TotalRecommendations > 0 {
+		stats.AdoptionRate = float64(stats.AppliedCount) / float64(stats.TotalRecommendations) * 100
+	}
+
+	return &stats, nil
+}
+
+// ComparePerformance compares current vs previous period
+func (s *PostgresStore) ComparePerformance(ctx context.Context, namespace string, days int) (*models.PerformanceComparison, error) {
+	query := `
+		WITH current_period AS (
+			SELECT 
+				COUNT(*) as rec_count,
+				COALESCE(SUM(savings_monthly_usd), 0) as savings
+			FROM recommendations
+			WHERE namespace = $1
+				AND created_at >= NOW() - make_interval(days => $2)
+		),
+		previous_period AS (
+			SELECT 
+				COUNT(*) as rec_count,
+				COALESCE(SUM(savings_monthly_usd), 0) as savings
+			FROM recommendations
+			WHERE namespace = $1
+				AND created_at >= NOW() - make_interval(days => $3)
+				AND created_at < NOW() - make_interval(days => $2)
+		)
+		SELECT 
+			c.rec_count as current_count,
+			c.savings as current_savings,
+			p.rec_count as previous_count,
+			p.savings as previous_savings
+		FROM current_period c, previous_period p
+	`
+
+	var comp models.PerformanceComparison
+	var currentCount, previousCount int
+	var currentSavings, previousSavings float64
+
+	err := s.db.QueryRowContext(ctx, query, namespace, days, days*2).Scan(
+		&currentCount,
+		&currentSavings,
+		&previousCount,
+		&previousSavings,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	comp.CurrentPeriodDays = days
+	comp.CurrentRecommendations = currentCount
+	comp.PreviousRecommendations = previousCount
+	comp.CurrentSavings = currentSavings
+	comp.PreviousSavings = previousSavings
+
+	// Calculate changes
+	if previousCount > 0 {
+		comp.RecommendationChange = float64(currentCount-previousCount) / float64(previousCount) * 100
+	}
+	if previousSavings > 0 {
+		comp.SavingsChange = (comp.CurrentSavings - previousSavings) / previousSavings * 100
+	}
+
+	return &comp, nil
 }
