@@ -383,10 +383,18 @@ func (s *Scanner) generateHistoricalRecommendation(
 	fmt.Printf("[INFO] Using %d-day historical analysis for %s/%s (%d CPU samples, %d memory samples)\n",
 		lookbackDays, pod.Namespace, workloadName, len(histMetrics.CPUSamples), len(histMetrics.MemorySamples))
 
-	// Update pod analyses with historical P95 values
+	// Update pod analyses with historical P95 values AND pattern analysis
 	for i := range pods {
 		pods[i].ActualCPU = int64(cpuPercentiles.P95)
 		pods[i].ActualMemory = int64(memPercentiles.P95)
+
+		// Add pattern and growth analysis (Week 9)
+		pods[i].CPUPattern = histMetrics.CPUPattern
+		pods[i].MemoryPattern = histMetrics.MemoryPattern
+		pods[i].CPUGrowth = histMetrics.CPUGrowth
+		pods[i].MemoryGrowth = histMetrics.MemoryGrowth
+		pods[i].DataQuality = histMetrics.DataQuality
+		pods[i].HasSufficientData = histMetrics.HasSufficientData
 	}
 
 	// Generate recommendation with historical data

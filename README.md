@@ -53,6 +53,7 @@ Production workloads get additional safety buffers:
 - kubectl configured
 - Go 1.21+ (for building from source)
 - Prometheus (recommended for historical analysis) OR metrics-server (fallback)
+- PostgreSQL (optional - for analytics and trend tracking)
 
 ### Installation
 ```bash
@@ -268,6 +269,247 @@ go test -tags=e2e ./tests/e2e -v
 ```
 
 ## Configuration
+
+## PostgreSQL Storage & Analytics (Optional)
+
+### Overview
+
+By default, the tool runs in-memory scans with no persistence. Enable PostgreSQL storage to:
+- Track recommendations over time
+- Analyze cost trends and patterns
+- Compare period-over-period performance
+- Monitor workload optimization history
+- Generate adoption rate analytics
+
+### Setup PostgreSQL
+
+**Start PostgreSQL with Docker:**
+```bash
+# Start PostgreSQL container with persistent storage
+docker run --name cost-optimizer-db \
+  -e POSTGRES_PASSWORD=costpass \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_DB=costdb \
+  -p 5432:5432 \
+  -v pgdata-cost-optimizer:/var/lib/postgresql/data \
+  -d postgres:14
+
+# Verify it's running
+docker ps | grep cost-optimizer-db
+
+# Test connection
+docker exec -it cost-optimizer-db psql -U postgres -d costdb -c "SELECT version();"
+```
+
+**Configure Environment:**
+```bash
+# Set database connection
+export DATABASE_URL="postgres://postgres:costpass@localhost:5432/costdb?sslmode=disable"
+export STORAGE_ENABLED=true
+```
+
+**Note:** The database schema is automatically created on first run. Tables include:
+- `recommendations` - Recommendation history
+- `audit_log` - Action tracking
+- `metrics_cache` - Performance optimization
+- `clusters` - Cluster metadata
+
+### Saving Recommendations
+```bash
+# Run scan and save to database
+./bin/k8s-cost-optimizer -n production --save
+
+# Output includes:
+# [INFO] Results will be saved to database
+# [INFO] Saved recommendation for production/api-server (ID: xxx-xxx-xxx)
+```
+
+**Important:** Data is saved as **snapshots** when you run scans with `--save` flag. This is not continuous sync - you must run scans manually or on a schedule.
+
+### Analytics Commands
+
+Once you have historical data, use analytics commands to gain insights:
+
+#### Dashboard Statistics
+```bash
+./bin/k8s-cost-optimizer analytics stats -n production --days 30
+```
+
+**Output:**
+```
+=== Cost Optimization Statistics ===
+
+Namespace: production
+Period: Last 30 days
+
+Recommendations:
+  Total: 45
+  Applied: 12
+  Adoption Rate: 26.7%
+
+Savings:
+  Potential: $2,450.00/month
+  Realized: $650.00/month
+  Average per Recommendation: $54.44/month
+
+Workloads:
+  Unique Workloads: 23
+```
+
+#### Savings Trends
+```bash
+./bin/k8s-cost-optimizer analytics trends -n production --days 30
+```
+
+**Output:**
+```
+=== Savings Trends ===
+
+Date         | Recommendations | Potential Savings  | Applied    | Realized Savings  
+------------------------------------------------------------------------------------------
+2025-12-03   | 15              | $825.00            | 4          | $220.00
+2025-12-02   | 14              | $780.00            | 3          | $180.00
+2025-12-01   | 16              | $845.00            | 5          | $250.00
+
+--- Summary ---
+Total Potential Savings: $2,450.00/month
+Overall Adoption Rate: 26.7%
+```
+
+#### Period Comparison
+```bash
+./bin/k8s-cost-optimizer analytics compare -n production --days 30
+```
+
+**Output:**
+```
+=== Period Comparison ===
+
+Metric               | Current         | Previous        | Change    
+----------------------------------------------------------------------
+Recommendations      | 45              | 38              | +18.4%
+Potential Savings    | $2,450.00       | $2,100.00       | +16.7%
+
+--- Interpretation ---
+⚠️  Recommendations increased by 18.4% - More optimization opportunities detected
+```
+
+#### Workload History
+```bash
+./bin/k8s-cost-optimizer analytics workload -n production --deployment api-server --limit 10
+```
+
+**Output:**
+```
+=== Workload History ===
+
+1. 2025-12-03 14:30:00
+   Type: RIGHT_SIZE
+   Current: CPU=1000m Memory=2048Mi
+   Recommended: CPU=450m Memory=896Mi
+   Savings: $42.50/month
+   Risk: LOW
+
+2. 2025-12-02 14:30:00
+   Type: RIGHT_SIZE
+   Current: CPU=1000m Memory=2048Mi
+   Recommended: CPU=480m Memory=920Mi
+   Savings: $40.20/month
+   Risk: LOW
+   ✅ Applied: 2025-12-02 18:45:00 by devops-team
+
+--- Trend ---
+✅ Workload improving ($2.30 decrease in potential savings)
+```
+
+### Scheduled Scans (Recommended)
+
+For continuous tracking, run scans on a schedule:
+
+**Option 1: Cron (Local Mac/Linux)**
+```bash
+# Edit crontab
+crontab -e
+
+# Add daily scan at 2 AM
+0 2 * * * cd /path/to/k8s-cost-optimizer && \
+  export DATABASE_URL="postgres://postgres:costpass@localhost:5432/costdb?sslmode=disable" && \
+  export STORAGE_ENABLED=true && \
+  ./bin/k8s-cost-optimizer -n production --save >> /tmp/cost-scan.log 2>&1
+```
+
+**Option 2: Kubernetes CronJob (Recommended for Production)**
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cost-optimizer-scan
+  namespace: monitoring
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: scanner
+            image: your-registry/k8s-cost-optimizer:latest
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: cost-optimizer-db
+                  key: url
+            - name: STORAGE_ENABLED
+              value: "true"
+            - name: PROMETHEUS_URL
+              value: "http://prometheus-server:9090"
+            command: 
+            - ./k8s-cost-optimizer
+            - -n
+            - production
+            - --save
+          restartPolicy: OnFailure
+```
+
+### Data Persistence
+
+**PostgreSQL data survives:**
+- ✅ Mac/server restarts
+- ✅ Docker restarts
+- ✅ Minikube restarts
+- ✅ Prometheus data loss
+
+**PostgreSQL data is lost if:**
+- ❌ You delete the Docker container AND volume
+- ❌ You run `docker volume rm pgdata-cost-optimizer`
+
+**Backup recommendations:**
+```bash
+# Backup database
+docker exec cost-optimizer-db pg_dump -U postgres costdb > backup.sql
+
+# Restore database
+docker exec -i cost-optimizer-db psql -U postgres costdb < backup.sql
+```
+
+### Verify Data
+```bash
+# Connect to database
+docker exec -it cost-optimizer-db psql -U postgres -d costdb
+
+# Check recommendations count
+SELECT COUNT(*) FROM recommendations;
+
+# View recent recommendations
+SELECT namespace, deployment, savings_monthly_usd, created_at 
+FROM recommendations 
+ORDER BY created_at DESC 
+LIMIT 10;
+
+# Exit
+\q
+```
 
 ### Environment Variables
 ```bash

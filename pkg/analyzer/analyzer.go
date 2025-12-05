@@ -22,11 +22,23 @@ type PodAnalysis struct {
 	ActualMemory      int64   // in bytes
 	CPUUtilization    float64 // percentage
 	MemoryUtilization float64 // percentage
-	HasHPA            bool    // NEW: indicates if workload has HPA
-	HPAName           string  // NEW: name of the HPA
-	WorkloadType      string  // NEW: Deployment, StatefulSet, etc.
-	WorkloadName      string  // NEW: name of the parent workload
+	HasHPA            bool    // indicates if workload has HPA
+	HPAName           string  // name of the HPA
+	WorkloadType      string  // Deployment, StatefulSet, etc.
+	WorkloadName      string  // name of the parent workload
 	Environment       Environment
+
+	// Pattern Analysis
+	CPUPattern    UsagePattern
+	MemoryPattern UsagePattern
+
+	// Growth Trends
+	CPUGrowth    GrowthTrend
+	MemoryGrowth GrowthTrend
+
+	// Data Quality
+	DataQuality       float64 // 0.0-1.0 confidence score
+	HasSufficientData bool    // true if >= 3 days of data
 }
 
 type Analyzer struct {

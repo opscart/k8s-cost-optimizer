@@ -62,6 +62,47 @@ func (h *HistoricalAnalyzer) GetHistoricalMetrics(
 
 	metrics.SampleCount = len(cpuSamples)
 
+	// Calculate CPU pattern analysis
+	if len(cpuSamples) > 0 {
+		metrics.CPUPattern = AnalyzeUsagePattern(cpuSamples)
+	}
+
+	// Calculate Memory pattern analysis
+	if len(memorySamples) > 0 {
+		metrics.MemoryPattern = AnalyzeUsagePattern(memorySamples)
+	}
+
+	// Calculate CPU growth trend
+	if len(cpuSamples) >= 10 { // Need minimum samples for trend
+		cpuGrowth, err := CalculateGrowthTrend(cpuSamples)
+		if err == nil {
+			metrics.CPUGrowth = *cpuGrowth
+		}
+	}
+
+	// Calculate Memory growth trend
+	if len(memorySamples) >= 10 {
+		memGrowth, err := CalculateGrowthTrend(memorySamples)
+		if err == nil {
+			metrics.MemoryGrowth = *memGrowth
+		}
+	}
+
+	// Calculate data quality and confidence
+	metrics.DataQuality = calculateDataQuality(len(cpuSamples), endTime.Sub(startTime))
+	metrics.HasSufficientData = len(cpuSamples) >= 864 // ~3 days at 5-min intervals
+
+	if h.verbose {
+		fmt.Printf("[DEBUG] Pattern Analysis - CPU: %s (CV: %.2f), Memory: %s (CV: %.2f)\n",
+			metrics.CPUPattern.Type, metrics.CPUPattern.Variation,
+			metrics.MemoryPattern.Type, metrics.MemoryPattern.Variation)
+
+		if metrics.CPUGrowth.IsGrowing {
+			fmt.Printf("[DEBUG] Growth Detected - CPU: %.1f%%/month, Predicted 3mo: %.0fm\n",
+				metrics.CPUGrowth.RatePerMonth, metrics.CPUGrowth.Predicted3Month)
+		}
+	}
+
 	return metrics, nil
 }
 
@@ -227,4 +268,26 @@ func calculateRateFromCounter(samples []MetricSample) []MetricSample {
 	}
 
 	return rates
+}
+
+// calculateDataQuality returns a quality score (0.0-1.0) based on sample count and time span
+func calculateDataQuality(sampleCount int, timeSpan time.Duration) float64 {
+	// Ideal: 7 days * 288 samples/day (5-min intervals) = ~2000 samples
+	idealSamples := 2000.0
+	sampleScore := float64(sampleCount) / idealSamples
+	if sampleScore > 1.0 {
+		sampleScore = 1.0
+	}
+
+	// Time span quality (ideal: 7 days)
+	idealDays := 7.0
+	actualDays := timeSpan.Hours() / 24.0
+	timeScore := actualDays / idealDays
+	if timeScore > 1.0 {
+		timeScore = 1.0
+	}
+
+	// Combined score (weighted average: 60% samples, 40% time)
+	quality := (sampleScore * 0.6) + (timeScore * 0.4)
+	return quality
 }

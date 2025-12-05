@@ -25,19 +25,22 @@ import (
 
 var (
 	// Scan flags
-	namespace      string
-	allNamespaces  bool
-	outputFormat   string
-	saveResults    bool
-	clusterID      string
-	usePrometheus  bool
-	provider       string
-	region         string
-	dryRun         bool
-	verbose        bool
-	generateReport bool
-	reportFormat   string
-	reportOutput   string
+	analyticsDays       int
+	analyticsDeployment string
+	analyticsLimit      int
+	namespace           string
+	allNamespaces       bool
+	outputFormat        string
+	saveResults         bool
+	clusterID           string
+	usePrometheus       bool
+	provider            string
+	region              string
+	dryRun              bool
+	verbose             bool
+	generateReport      bool
+	reportFormat        string
+	reportOutput        string
 
 	// Global config
 	cfg   *config.Config
@@ -99,6 +102,74 @@ func main() {
 	rootCmd.AddCommand(historyCmd)
 	rootCmd.AddCommand(auditCmd)
 
+	// Analytics command (after line 100)
+	analyticsCmd := &cobra.Command{
+		Use:   "analytics",
+		Short: "Query cost optimization analytics and trends",
+		Long:  "Access historical analytics, trends, and statistics from saved recommendations",
+	}
+
+	// Analytics subcommands
+	statsCmd := &cobra.Command{
+		Use:   "stats",
+		Short: "Show aggregate statistics for a namespace",
+		Long:  "Display dashboard statistics including total recommendations, savings, and adoption rate",
+		Args:  cobra.NoArgs,
+		Run:   runAnalyticsStats,
+	}
+
+	trendsCmd := &cobra.Command{
+		Use:   "trends",
+		Short: "Show savings trends over time",
+		Long:  "Display daily savings trends with potential and realized savings",
+		Args:  cobra.NoArgs,
+		Run:   runAnalyticsTrends,
+	}
+
+	compareCmd := &cobra.Command{
+		Use:   "compare",
+		Short: "Compare current vs previous period",
+		Long:  "Compare recommendations and savings between current and previous time periods",
+		Args:  cobra.NoArgs,
+		Run:   runAnalyticsCompare,
+	}
+
+	workloadCmd := &cobra.Command{
+		Use:   "workload",
+		Short: "Show workload recommendation history",
+		Long:  "Display recommendation history for a specific workload",
+		Args:  cobra.NoArgs,
+		Run:   runAnalyticsWorkload,
+	}
+
+	// Add flags to analytics commands
+	statsCmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Namespace to analyze (required)")
+	statsCmd.Flags().IntVar(&analyticsDays, "days", 30, "Number of days to analyze")
+	statsCmd.MarkFlagRequired("namespace")
+
+	trendsCmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Namespace to analyze (required)")
+	trendsCmd.Flags().IntVar(&analyticsDays, "days", 30, "Number of days to analyze")
+	trendsCmd.MarkFlagRequired("namespace")
+
+	compareCmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Namespace to analyze (required)")
+	compareCmd.Flags().IntVar(&analyticsDays, "days", 30, "Current period in days")
+	compareCmd.MarkFlagRequired("namespace")
+
+	workloadCmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Namespace (required)")
+	workloadCmd.Flags().StringVarP(&analyticsDeployment, "deployment", "d", "", "Deployment name (required)")
+	workloadCmd.Flags().IntVar(&analyticsLimit, "limit", 10, "Number of history entries to show")
+	workloadCmd.MarkFlagRequired("namespace")
+	workloadCmd.MarkFlagRequired("deployment")
+
+	// Add subcommands to analytics
+	analyticsCmd.AddCommand(statsCmd)
+	analyticsCmd.AddCommand(trendsCmd)
+	analyticsCmd.AddCommand(compareCmd)
+	analyticsCmd.AddCommand(workloadCmd)
+
+	// Add analytics to root
+	rootCmd.AddCommand(analyticsCmd)
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -141,7 +212,7 @@ func runScan(cmd *cobra.Command, args []string) {
 
 	// Initialize storage if --save flag is used
 	if saveResults {
-		if err := initStorage(); err != nil {
+		if err := initStorageForced(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -595,4 +666,213 @@ func generateCostReport(recommendations []*models.Recommendation, totalSavings f
 	}
 
 	return nil
+}
+
+// Analytics command handlers
+
+func runAnalyticsStats(cmd *cobra.Command, args []string) {
+	ctx := context.Background()
+
+	// Force initialize storage
+	if err := initStorageForced(); err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Failed to initialize storage: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[INFO] Make sure DATABASE_URL and STORAGE_ENABLED are set\n")
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	// Get dashboard stats
+	stats, err := store.GetDashboardStats(ctx, namespace, analyticsDays)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Failed to get statistics: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Display stats
+	fmt.Printf("\n=== Cost Optimization Statistics ===\n\n")
+	fmt.Printf("Namespace: %s\n", stats.Namespace)
+	fmt.Printf("Period: Last %d days\n\n", stats.PeriodDays)
+
+	fmt.Printf("Recommendations:\n")
+	fmt.Printf("  Total: %d\n", stats.TotalRecommendations)
+	fmt.Printf("  Applied: %d\n", stats.AppliedCount)
+	fmt.Printf("  Adoption Rate: %.1f%%\n\n", stats.AdoptionRate)
+
+	fmt.Printf("Savings:\n")
+	fmt.Printf("  Potential: $%.2f/month\n", stats.PotentialSavings)
+	fmt.Printf("  Realized: $%.2f/month\n", stats.RealizedSavings)
+	fmt.Printf("  Average per Recommendation: $%.2f/month\n\n", stats.AvgSavingsPerRecommendation)
+
+	fmt.Printf("Workloads:\n")
+	fmt.Printf("  Unique Workloads: %d\n", stats.UniqueWorkloads)
+
+	if stats.TotalRecommendations == 0 {
+		fmt.Printf("\n[INFO] No recommendations found for namespace '%s' in the last %d days\n", namespace, analyticsDays)
+		fmt.Printf("[INFO] Run scans with --save flag to collect data\n")
+	}
+}
+
+func runAnalyticsTrends(cmd *cobra.Command, args []string) {
+	ctx := context.Background()
+
+	// Force initialize storage
+	if err := initStorageForced(); err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Failed to initialize storage: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	// Get savings trend
+	trend, err := store.GetSavingsTrend(ctx, namespace, analyticsDays)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Failed to get trends: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Display trends
+	fmt.Printf("\n=== Savings Trends ===\n\n")
+	fmt.Printf("Namespace: %s\n", trend.Namespace)
+	fmt.Printf("Period: Last %d days\n\n", trend.Days)
+
+	if len(trend.DataPoints) == 0 {
+		fmt.Printf("[INFO] No trend data available\n")
+		fmt.Printf("[INFO] Run scans with --save flag over multiple days to see trends\n")
+		return
+	}
+
+	fmt.Printf("%-12s | %-15s | %-18s | %-10s | %-18s\n",
+		"Date", "Recommendations", "Potential Savings", "Applied", "Realized Savings")
+	fmt.Println(strings.Repeat("-", 90))
+
+	for _, dp := range trend.DataPoints {
+		fmt.Printf("%-12s | %-15d | $%-17.2f | %-10d | $%-17.2f\n",
+			dp.Date.Format("2006-01-02"),
+			dp.RecommendationCount,
+			dp.PotentialSavings,
+			dp.AppliedCount,
+			dp.RealizedSavings,
+		)
+	}
+
+	fmt.Printf("\n--- Summary ---\n")
+	fmt.Printf("Total Potential Savings: $%.2f/month\n", trend.TotalPotentialSavings)
+	fmt.Printf("Total Realized Savings: $%.2f/month\n", trend.TotalRealizedSavings)
+	fmt.Printf("Total Recommendations: %d\n", trend.TotalRecommendations)
+	fmt.Printf("Total Applied: %d\n", trend.TotalApplied)
+	fmt.Printf("Overall Adoption Rate: %.1f%%\n", trend.AdoptionRate)
+}
+
+func runAnalyticsCompare(cmd *cobra.Command, args []string) {
+	ctx := context.Background()
+
+	// Force initialize storage
+	if err := initStorageForced(); err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Failed to initialize storage: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	// Get performance comparison
+	comp, err := store.ComparePerformance(ctx, namespace, analyticsDays)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Failed to compare performance: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Display comparison
+	fmt.Printf("\n=== Period Comparison ===\n\n")
+	fmt.Printf("Namespace: %s\n", namespace)
+	fmt.Printf("Current Period: Last %d days\n", comp.CurrentPeriodDays)
+	fmt.Printf("Previous Period: %d days before that\n\n", comp.CurrentPeriodDays)
+
+	fmt.Printf("%-20s | %-15s | %-15s | %-10s\n", "Metric", "Current", "Previous", "Change")
+	fmt.Println(strings.Repeat("-", 70))
+
+	fmt.Printf("%-20s | %-15d | %-15d | %+.1f%%\n",
+		"Recommendations",
+		comp.CurrentRecommendations,
+		comp.PreviousRecommendations,
+		comp.RecommendationChange,
+	)
+
+	fmt.Printf("%-20s | $%-14.2f | $%-14.2f | %+.1f%%\n",
+		"Potential Savings",
+		comp.CurrentSavings,
+		comp.PreviousSavings,
+		comp.SavingsChange,
+	)
+
+	// Interpretation
+	fmt.Printf("\n--- Interpretation ---\n")
+	if comp.RecommendationChange > 10 {
+		fmt.Printf("⚠️  Recommendations increased by %.1f%% - More optimization opportunities detected\n", comp.RecommendationChange)
+	} else if comp.RecommendationChange < -10 {
+		fmt.Printf("✅ Recommendations decreased by %.1f%% - Workloads are better optimized\n", -comp.RecommendationChange)
+	} else {
+		fmt.Printf("➡️  Recommendations relatively stable (%.1f%% change)\n", comp.RecommendationChange)
+	}
+
+	if comp.SavingsChange > 10 {
+		fmt.Printf("⚠️  Potential savings increased by %.1f%% - Growing cost optimization opportunities\n", comp.SavingsChange)
+	} else if comp.SavingsChange < -10 {
+		fmt.Printf("✅ Potential savings decreased by %.1f%% - Cost efficiency improving\n", -comp.SavingsChange)
+	}
+}
+
+func runAnalyticsWorkload(cmd *cobra.Command, args []string) {
+	ctx := context.Background()
+
+	// Force initialize storage
+	if err := initStorageForced(); err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Failed to initialize storage: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	// Get workload history
+	history, err := store.GetWorkloadHistory(ctx, namespace, analyticsDeployment, analyticsLimit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Failed to get workload history: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Display history
+	fmt.Printf("\n=== Workload History ===\n\n")
+	fmt.Printf("Namespace: %s\n", namespace)
+	fmt.Printf("Deployment: %s\n", analyticsDeployment)
+	fmt.Printf("Showing last %d entries\n\n", analyticsLimit)
+
+	if len(history) == 0 {
+		fmt.Printf("[INFO] No history found for workload %s/%s\n", namespace, analyticsDeployment)
+		return
+	}
+
+	for i, rec := range history {
+		fmt.Printf("%d. %s\n", i+1, rec.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("   Type: %s\n", rec.Type)
+		fmt.Printf("   Current: CPU=%dm Memory=%dMi\n", rec.CurrentCPU, rec.CurrentMemory/(1024*1024))
+		fmt.Printf("   Recommended: CPU=%dm Memory=%dMi\n", rec.RecommendedCPU, rec.RecommendedMemory/(1024*1024))
+		fmt.Printf("   Savings: $%.2f/month\n", rec.SavingsMonthly)
+		fmt.Printf("   Risk: %s\n", rec.Risk)
+		if rec.AppliedAt != nil {
+			fmt.Printf("   ✅ Applied: %s by %s\n", rec.AppliedAt.Format("2006-01-02 15:04:05"), rec.AppliedBy)
+		}
+		fmt.Println()
+	}
+
+	// Calculate trend
+	if len(history) >= 2 {
+		first := history[len(history)-1]
+		last := history[0]
+		savingsChange := last.SavingsMonthly - first.SavingsMonthly
+
+		fmt.Printf("--- Trend ---\n")
+		if savingsChange > 5 {
+			fmt.Printf("⚠️  Optimization opportunity growing ($%.2f increase)\n", savingsChange)
+		} else if savingsChange < -5 {
+			fmt.Printf("✅ Workload improving ($%.2f decrease in potential savings)\n", -savingsChange)
+		} else {
+			fmt.Printf("➡️  Workload stable\n")
+		}
+	}
 }

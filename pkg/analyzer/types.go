@@ -16,9 +16,21 @@ type HistoricalMetrics struct {
 	// Memory metrics (in bytes)
 	MemorySamples []MetricSample
 
+	// Pattern Analysis (NEW)
+	CPUPattern    UsagePattern
+	MemoryPattern UsagePattern
+
+	// Growth Trends (NEW)
+	CPUGrowth    GrowthTrend
+	MemoryGrowth GrowthTrend
+
 	// Metadata
 	SampleCount int
 	Resolution  time.Duration // e.g., 5 minutes between samples
+
+	// Confidence Scoring (NEW)
+	DataQuality       float64 // 0.0-1.0, based on sample count and time span
+	HasSufficientData bool    // true if >= 3 days of data
 }
 
 // MetricSample represents a single metric data point
