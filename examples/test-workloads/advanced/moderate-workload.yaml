@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moderate-app
+  namespace: cost-test
+  labels:
+    scenario: over-provisioned-active
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: moderate-app
+  template:
+    metadata:
+      labels:
+        app: moderate-app
+    spec:
+      containers:
+      - name: app
+        image: nginx:alpine
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+        # Light but consistent CPU load
+        # Simulates over-provisioned but actively-used workload
+        command: ["sh", "-c"]
+        args:
+        - |
+          while true; do
+            dd if=/dev/zero of=/dev/null bs=512K count=50 &>/dev/null
+            sleep 3
+          done

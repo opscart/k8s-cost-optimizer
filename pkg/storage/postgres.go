@@ -82,8 +82,9 @@ func (s *PostgresStore) SaveRecommendation(ctx context.Context, rec *models.Reco
 			type, current_cpu_millicores, current_memory_bytes,
 			recommended_cpu_millicores, recommended_memory_bytes,
 			reason, savings_monthly_usd, impact, risk, command,
-			created_at, applied_at, applied_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+			created_at, applied_at, applied_by,
+			confidence, data_quality, pattern_info, has_sufficient_data
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
 	`
 
 	var appliedAt *time.Time
@@ -98,6 +99,8 @@ func (s *PostgresStore) SaveRecommendation(ctx context.Context, rec *models.Reco
 		rec.RecommendedCPU, rec.RecommendedMemory,
 		rec.Reason, rec.SavingsMonthly, rec.Impact, rec.Risk, rec.Command,
 		rec.CreatedAt, appliedAt, rec.AppliedBy,
+		// Week 9 Day 2: Confidence fields
+		rec.Confidence, rec.DataQuality, rec.PatternInfo, rec.HasSufficientData,
 	)
 
 	return err

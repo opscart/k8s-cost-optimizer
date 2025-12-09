@@ -542,6 +542,25 @@ func outputText(recommendations []*models.Recommendation, totalSavings float64) 
 		fmt.Println() // Now move to next line
 
 		fmt.Printf("   Type: %s\n", rec.Type)
+
+		// Display confidence and pattern info (Week 9 Day 2)
+		if rec.Confidence != "" && rec.Confidence != "N/A" {
+			confidenceIcon := ""
+			switch rec.Confidence {
+			case "HIGH":
+				confidenceIcon = "✓"
+			case "MEDIUM":
+				confidenceIcon = "~"
+			case "LOW":
+				confidenceIcon = "?"
+			}
+			fmt.Printf("   Confidence: %s %s", confidenceIcon, rec.Confidence)
+			if rec.PatternInfo != "" && rec.PatternInfo != "Insufficient data" {
+				fmt.Printf(" (%s)", rec.PatternInfo)
+			}
+			fmt.Println()
+		}
+
 		if rec.Reason != "" {
 			fmt.Printf("   Reason: %s\n", rec.Reason)
 		}
@@ -556,7 +575,6 @@ func outputText(recommendations []*models.Recommendation, totalSavings float64) 
 		}
 		fmt.Println()
 	}
-
 	fmt.Printf("Total potential savings: $%.2f/month\n", totalSavings)
 }
 

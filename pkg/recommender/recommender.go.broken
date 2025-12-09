@@ -31,11 +31,11 @@ type Recommendation struct {
 	Savings           float64
 	Impact            string
 	Risk              string
-	Provider          string
-	Confidence        string
-	DataQuality       float64
-	PatternInfo       string
-	HasSufficientData bool
+	Provider          string  // Cloud provider used for pricing -
+	Confidence        string  // "HIGH", "MEDIUM", "LOW"
+	DataQuality       float64 // 0.0-1.0 score
+	PatternInfo       string  // Human-readable pattern description
+	HasSufficientData bool    // Whether we have enough data for confident recommendations
 }
 
 type Recommender struct {
@@ -43,6 +43,7 @@ type Recommender struct {
 	safetyBuffer    float64
 }
 
+// New creates a recommender with default pricing (backwards compatible)
 func New() *Recommender {
 	return &Recommender{
 		pricingProvider: pricing.NewDefaultProvider(23.0, 3.0),
@@ -50,6 +51,7 @@ func New() *Recommender {
 	}
 }
 
+// NewWithPricing creates a recommender with a specific pricing provider
 func NewWithPricing(provider pricing.Provider) *Recommender {
 	return &Recommender{
 		pricingProvider: provider,
@@ -64,7 +66,7 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 		return nil
 	}
 
-	// Get workload type and environment
+	// Get workload type and environment EARLY (needed by all paths)
 	workloadType := analyses[0].WorkloadType
 	if workloadType == "" {
 		workloadType = "Deployment"
@@ -77,13 +79,13 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 
 	workloadConfig := analyzer.GetWorkloadConfig(analyzer.WorkloadType(workloadType))
 
-	// Calculate combined safety buffer
+	// Use COMBINED safety buffer (workload × environment)
 	baseSafetyBuffer := analyzer.GetCombinedSafetyBuffer(
 		analyzer.WorkloadType(workloadType),
 		analyzer.Environment(environment),
 	)
 
-	// Adjust safety buffer based on pattern analysis (Week 9)
+	// Adjust safety buffer based on pattern analysis
 	safetyBuffer := baseSafetyBuffer
 	if analyses[0].HasSufficientData {
 		safetyBuffer = adjustSafetyBufferForPattern(
@@ -92,7 +94,6 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 			analyses[0].MemoryPattern,
 		)
 	}
-
 	// Calculate confidence and pattern info (Week 9 Day 2)
 	confidence := calculateConfidence(
 		analyses[0].DataQuality,
@@ -105,9 +106,9 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 		analyses[0].CPUGrowth,
 	)
 
-	// Check if workload has HPA - skip optimization
+	// Check if workload has HPA enabled - skip optimization
 	if analyses[0].HasHPA {
-		return &Recommendation{
+		rec := &Recommendation{
 			Type:              NoAction,
 			DeploymentName:    deploymentName,
 			Namespace:         analyses[0].Namespace,
@@ -127,9 +128,18 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 			PatternInfo:       "HPA-managed",
 			HasSufficientData: false,
 		}
+		return rec
 	}
 
-	// Calculate averages
+	rec := &Recommendation{
+		DeploymentName: deploymentName,
+		Namespace:      analyses[0].Namespace,
+		WorkloadType:   workloadType,
+		Environment:    environment,
+		Provider:       r.pricingProvider.Name(),
+	}
+
+	// Calculate average requested and actual usage
 	var totalRequestedCPU, totalActualCPU int64
 	var totalRequestedMem, totalActualMem int64
 
@@ -145,19 +155,13 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 	avgActualCPU := totalActualCPU / int64(len(analyses))
 	avgActualMem := totalActualMem / int64(len(analyses))
 
-	rec := &Recommendation{
-		DeploymentName: deploymentName,
-		Namespace:      analyses[0].Namespace,
-		WorkloadType:   workloadType,
-		Environment:    environment,
-		Provider:       r.pricingProvider.Name(),
-		CurrentCPU:     avgRequestedCPU,
-		CurrentMemory:  avgRequestedMem,
-	}
+	rec.CurrentCPU = avgRequestedCPU
+	rec.CurrentMemory = avgRequestedMem
 
 	// Check if workload type should be optimized
 	if !workloadConfig.OptimizeEnabled {
 		rec.Type = NoAction
+		rec.Environment = environment
 		rec.Reason = fmt.Sprintf("Workload type %s (%s) - optimization disabled for safety",
 			workloadType, workloadConfig.Description)
 		rec.RecommendedCPU = avgRequestedCPU
@@ -165,124 +169,129 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 		rec.Risk = workloadConfig.RiskLevel
 		rec.Impact = "N/A"
 		rec.Savings = 0
-		rec.Confidence = confidence
-		rec.DataQuality = analyses[0].DataQuality
-		rec.PatternInfo = patternInfo
-		rec.HasSufficientData = analyses[0].HasSufficientData
-		return rec
-	}
-
-	// Check if workload is idle
-	cpuUtil := float64(avgActualCPU) / float64(avgRequestedCPU)
-	if cpuUtil < 0.05 {
-		rec.Type = ScaleDown
-		rec.Reason = fmt.Sprintf("Workload appears idle (%.1f%% CPU utilization) - Workload: %s, Environment: %s",
-			cpuUtil*100, workloadType, environment)
-		rec.RecommendedCPU = 0
-		rec.RecommendedMemory = 0
-		rec.Impact = "HIGH"
-		rec.Risk = workloadConfig.RiskLevel
-		rec.Savings = r.calculateMonthlyCost(ctx, avgRequestedCPU, avgRequestedMem) * float64(len(analyses))
-		rec.Confidence = confidence
-		rec.DataQuality = analyses[0].DataQuality
-		rec.PatternInfo = patternInfo
-		rec.HasSufficientData = analyses[0].HasSufficientData
-		return rec
-	}
-
-	// Calculate recommended resources
-	recCPU := int64(float64(avgActualCPU) * safetyBuffer)
-	recMem := int64(float64(avgActualMem) * safetyBuffer)
-
-	// Adjust for growth trends (Week 9)
-	if analyses[0].HasSufficientData {
-		recCPU = adjustForGrowthTrend(recCPU, analyses[0].CPUGrowth)
-		recMem = adjustForGrowthTrend(recMem, analyses[0].MemoryGrowth)
-	}
-
-	// Minimum thresholds
-	if recCPU < 10 {
-		recCPU = 10
-	}
-	if recMem < 10*1024*1024 {
-		recMem = 10 * 1024 * 1024
-	}
-
-	// Check if right-sizing is beneficial
-	cpuReduction := (float64(avgRequestedCPU) - float64(recCPU)) / float64(avgRequestedCPU) * 100
-	memReduction := (float64(avgRequestedMem) - float64(recMem)) / float64(avgRequestedMem) * 100
-
-	if cpuReduction > 25 || memReduction > 25 {
-		rec.Type = RightSize
-		rec.RecommendedCPU = recCPU
-		rec.RecommendedMemory = recMem
-
-		// Build reason with pattern and growth context (Week 9)
-		reasonParts := []string{
-			fmt.Sprintf("Over-provisioned: CPU %.0f%% under-utilized, Memory %.0f%% under-utilized", cpuReduction, memReduction),
-		}
-
-		if analyses[0].HasSufficientData {
-			reasonParts = append(reasonParts,
-				fmt.Sprintf("Pattern: CPU %s (CV: %.2f)", analyses[0].CPUPattern.Type, analyses[0].CPUPattern.Variation))
-
-			if analyses[0].CPUGrowth.IsGrowing && analyses[0].CPUGrowth.RatePerMonth > 5.0 {
-				reasonParts = append(reasonParts,
-					fmt.Sprintf("⚠️ Growing %.1f%%/month", analyses[0].CPUGrowth.RatePerMonth))
-			}
-		}
-
-		reasonParts = append(reasonParts,
-			fmt.Sprintf("Workload: %s, Safety: %.1fx, Env: %s", workloadType, safetyBuffer, environment))
-
-		rec.Reason = strings.Join(reasonParts, " | ")
-
-		currentCost := r.calculateMonthlyCost(ctx, avgRequestedCPU, avgRequestedMem) * float64(len(analyses))
-		newCost := r.calculateMonthlyCost(ctx, recCPU, recMem) * float64(len(analyses))
-		rec.Savings = currentCost - newCost
-
-		// Skip if savings negligible
-		if rec.Savings < 1.0 {
+		// Check if workload type should be optimized
+		if !workloadConfig.OptimizeEnabled {
 			rec.Type = NoAction
-			rec.Reason = "Savings too small to justify change"
-			rec.Impact = "NONE"
-			rec.Risk = "NONE"
+			rec.Environment = environment
+			rec.Reason = fmt.Sprintf("Workload type %s (%s) - optimization disabled for safety",
+				workloadType, workloadConfig.Description)
+
+			// Check if workload is idle (< 5% CPU usage)
+			cpuUtil := float64(avgActualCPU) / float64(avgRequestedCPU)
+			if cpuUtil < 0.05 {
+				rec.Type = ScaleDown
+				rec.Environment = environment
+				rec.Reason = fmt.Sprintf("Workload appears idle (%.1f%% CPU utilization) - Workload: %s, Environment: %s",
+					cpuUtil*100, workloadType, environment)
+				rec.RecommendedCPU = 0
+				rec.RecommendedMemory = 0
+				rec.Impact = "HIGH"
+				rec.Risk = workloadConfig.RiskLevel
+
+				rec.Savings = r.calculateMonthlyCost(ctx, avgRequestedCPU, avgRequestedMem) * float64(len(analyses))
+				rec.Confidence = confidence
+				rec.DataQuality = analyses[0].DataQuality
+				rec.PatternInfo = patternInfo
+				rec.HasSufficientData = analyses[0].HasSufficientData
+				return rec
+			}
+
+			// Calculate recommended resources with combined safety buffer
+			recCPU := int64(float64(avgActualCPU) * safetyBuffer)
+			recMem := int64(float64(avgActualMem) * safetyBuffer)
+
+			// Adjust for growth trends if data is sufficient (Week 9)
+			if analyses[0].HasSufficientData {
+				recCPU = adjustForGrowthTrend(recCPU, analyses[0].CPUGrowth)
+				recMem = adjustForGrowthTrend(recMem, analyses[0].MemoryGrowth)
+			}
+
+			// Minimum thresholds
+			if recCPU < 10 {
+				recCPU = 10
+			}
+			if recMem < 10*1024*1024 {
+				recMem = 10 * 1024 * 1024
+			}
+
+			// Check if right-sizing is beneficial
+			cpuReduction := (float64(avgRequestedCPU) - float64(recCPU)) / float64(avgRequestedCPU) * 100
+			memReduction := (float64(avgRequestedMem) - float64(recMem)) / float64(avgRequestedMem) * 100
+
+			if cpuReduction > 25 || memReduction > 25 {
+				rec.Type = RightSize
+				rec.RecommendedCPU = recCPU
+				rec.RecommendedMemory = recMem
+				rec.Environment = environment
+
+				// Build reason with pattern and growth context
+				reasonParts := []string{
+					fmt.Sprintf("Over-provisioned: CPU %.0f%% under-utilized, Memory %.0f%% under-utilized", cpuReduction, memReduction),
+				}
+			}
+			// Add pattern information if available
+			if analyses[0].HasSufficientData {
+				reasonParts = append(reasonParts,
+					fmt.Sprintf("Pattern: CPU %s (CV: %.2f)", analyses[0].CPUPattern.Type, analyses[0].CPUPattern.Variation))
+
+				// Add growth warning if significant
+				if analyses[0].CPUGrowth.IsGrowing && analyses[0].CPUGrowth.RatePerMonth > 5.0 {
+					reasonParts = append(reasonParts,
+						fmt.Sprintf("⚠️ Growing %.1f%%/month", analyses[0].CPUGrowth.RatePerMonth))
+				}
+			}
+
+			// Add workload context
+			reasonParts = append(reasonParts,
+				fmt.Sprintf("Workload: %s, Safety: %.1fx, Env: %s", workloadType, safetyBuffer, environment))
+
+			rec.Reason = strings.Join(reasonParts, " | ")
+
+			currentCost := r.calculateMonthlyCost(ctx, avgRequestedCPU, avgRequestedMem) * float64(len(analyses))
+			newCost := r.calculateMonthlyCost(ctx, recCPU, recMem) * float64(len(analyses))
+			rec.Savings = currentCost - newCost
+
+			// Skip if savings are negligible (<$1/month)
+			if rec.Savings < 1.0 {
+				rec.Type = NoAction
+				rec.Reason = "Savings too small to justify change"
+				rec.Impact = "NONE"
+				rec.Risk = "NONE"
+				rec.Confidence = confidence
+				rec.DataQuality = analyses[0].DataQuality
+				rec.PatternInfo = patternInfo
+				rec.HasSufficientData = analyses[0].HasSufficientData
+				return rec
+			}
+
+			if rec.Savings > 50 {
+				rec.Impact = "HIGH"
+			} else if rec.Savings > 20 {
+				rec.Impact = "MEDIUM"
+			} else {
+				rec.Impact = "LOW"
+			}
+
+			// Risk assessment
+			avgReduction := (cpuReduction + memReduction) / 2
+			if avgReduction > 75 {
+				rec.Risk = "HIGH"
+			} else if avgReduction > 50 {
+				rec.Risk = "MEDIUM"
+			} else {
+				rec.Risk = workloadConfig.RiskLevel
+			}
+			// Add Confidence
 			rec.Confidence = confidence
 			rec.DataQuality = analyses[0].DataQuality
 			rec.PatternInfo = patternInfo
 			rec.HasSufficientData = analyses[0].HasSufficientData
+
 			return rec
 		}
-
-		// Set impact
-		if rec.Savings > 50 {
-			rec.Impact = "HIGH"
-		} else if rec.Savings > 20 {
-			rec.Impact = "MEDIUM"
-		} else {
-			rec.Impact = "LOW"
-		}
-
-		// Risk assessment
-		avgReduction := (cpuReduction + memReduction) / 2
-		if avgReduction > 75 {
-			rec.Risk = "HIGH"
-		} else if avgReduction > 50 {
-			rec.Risk = "MEDIUM"
-		} else {
-			rec.Risk = workloadConfig.RiskLevel
-		}
-
-		rec.Confidence = confidence
-		rec.DataQuality = analyses[0].DataQuality
-		rec.PatternInfo = patternInfo
-		rec.HasSufficientData = analyses[0].HasSufficientData
-
-		return rec
 	}
-
-	// No action needed
 	rec.Type = NoAction
+	rec.Environment = environment
 	rec.Reason = "Resource allocation is appropriate"
 	rec.RecommendedCPU = avgRequestedCPU
 	rec.RecommendedMemory = avgRequestedMem
@@ -298,8 +307,10 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 }
 
 func (r *Recommender) calculateMonthlyCost(ctx context.Context, cpuMillicores int64, memoryBytes int64) float64 {
+	// Get cost info from provider
 	costInfo, err := r.pricingProvider.GetCostInfo(ctx, "", "")
 	if err != nil {
+		// Fallback to defaults if provider fails
 		cpuCores := float64(cpuMillicores) / 1000.0
 		memoryGiB := float64(memoryBytes) / (1024.0 * 1024.0 * 1024.0)
 		return (cpuCores * 23.0) + (memoryGiB * 3.0)
@@ -353,28 +364,40 @@ func (r *Recommendation) String() string {
 	)
 }
 
-// Week 9: Pattern-based safety buffer adjustment
+// adjustSafetyBufferForPattern adjusts safety buffer based on usage pattern
 func adjustSafetyBufferForPattern(baseSafetyBuffer float64, cpuPattern analyzer.UsagePattern, memPattern analyzer.UsagePattern) float64 {
+	// Start with base buffer
 	adjustedBuffer := baseSafetyBuffer
 
+	// CPU pattern adjustments
 	switch cpuPattern.Type {
 	case "steady":
-		adjustedBuffer *= 0.90 // -10%
+		// Steady workloads are predictable - can use lower buffer
+		adjustedBuffer *= 0.90 // Reduce by 10%
 	case "spiky":
-		adjustedBuffer *= 1.15 // +15%
+		// Spiky workloads need higher buffer to handle spikes
+		adjustedBuffer *= 1.15 // Increase by 15%
 	case "highly-variable":
-		adjustedBuffer *= 1.25 // +25%
+		// Highly variable workloads need maximum buffer
+		adjustedBuffer *= 1.25 // Increase by 25%
 	case "moderate":
+		// Moderate variation - no adjustment needed
 		adjustedBuffer *= 1.0
 	}
 
+	// Additional adjustment based on coefficient of variation
+	// High CV = more unpredictable = needs higher buffer
 	if cpuPattern.Variation > 0.5 {
+		// Very high variation (CV > 0.5)
 		adjustedBuffer *= 1.10
 	}
 
+	// Ensure minimum safety buffer of 1.2x (never go below)
 	if adjustedBuffer < 1.2 {
 		adjustedBuffer = 1.2
 	}
+
+	// Ensure maximum safety buffer of 3.0x (don't over-provision)
 	if adjustedBuffer > 3.0 {
 		adjustedBuffer = 3.0
 	}
@@ -382,13 +405,15 @@ func adjustSafetyBufferForPattern(baseSafetyBuffer float64, cpuPattern analyzer.
 	return adjustedBuffer
 }
 
-// Week 9: Growth-aware recommendations
+// adjustForGrowthTrend adjusts recommendations based on growth trends
 func adjustForGrowthTrend(baseValue int64, growth analyzer.GrowthTrend) int64 {
 	if !growth.IsGrowing {
 		return baseValue
 	}
 
+	// If growing > 5%/month, add buffer for 3-month growth
 	if growth.RatePerMonth > 5.0 {
+		// Add 50% of predicted 3-month growth as buffer
 		growthBuffer := int64(growth.Predicted3Month * 0.5)
 		return baseValue + growthBuffer
 	}
@@ -396,7 +421,7 @@ func adjustForGrowthTrend(baseValue int64, growth analyzer.GrowthTrend) int64 {
 	return baseValue
 }
 
-// Week 9 Day 2: Confidence scoring
+// calculateConfidence determines recommendation confidence level
 func calculateConfidence(dataQuality float64, hasSufficientData bool, patternType string) string {
 	if !hasSufficientData {
 		return "LOW"
@@ -406,11 +431,12 @@ func calculateConfidence(dataQuality float64, hasSufficientData bool, patternTyp
 		return "HIGH"
 	} else if dataQuality >= 0.6 {
 		return "MEDIUM"
+	} else {
+		return "LOW"
 	}
-	return "LOW"
 }
 
-// Week 9 Day 2: Pattern info for display
+// buildPatternInfo creates human-readable pattern description
 func buildPatternInfo(cpuPattern analyzer.UsagePattern, memPattern analyzer.UsagePattern, cpuGrowth analyzer.GrowthTrend) string {
 	parts := []string{}
 

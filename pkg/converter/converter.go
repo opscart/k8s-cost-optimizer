@@ -41,7 +41,7 @@ func OldToNew(old *recommender.Recommendation, clusterID string) *models.Recomme
 		ClusterID:  clusterID,
 		Namespace:  old.Namespace,
 		Deployment: old.DeploymentName,
-		Pod:        old.DeploymentName, // Use deployment name as pod identifier for now
+		Pod:        old.DeploymentName,
 	}
 
 	return &models.Recommendation{
@@ -57,6 +57,11 @@ func OldToNew(old *recommender.Recommendation, clusterID string) *models.Recomme
 		Impact:            old.Impact,
 		Risk:              risk,
 		Command:           generateCommand(old),
+		// Week 9 Day 2: Add confidence fields
+		Confidence:        old.Confidence,
+		DataQuality:       old.DataQuality,
+		PatternInfo:       old.PatternInfo,
+		HasSufficientData: old.HasSufficientData,
 	}
 }
 

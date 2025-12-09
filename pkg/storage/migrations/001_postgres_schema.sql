@@ -30,6 +30,12 @@ CREATE TABLE IF NOT EXISTS recommendations (
     impact VARCHAR(20), -- HIGH, MEDIUM, LOW
     risk VARCHAR(20), -- NONE, LOW, MEDIUM, HIGH
     
+    -- Week 9: Confidence and pattern analysis
+    confidence VARCHAR(10), -- HIGH, MEDIUM, LOW
+    data_quality DECIMAL(3,2), -- 0.0-1.0 quality score
+    pattern_info VARCHAR(255), -- Human-readable pattern description
+    has_sufficient_data BOOLEAN DEFAULT false, -- True if >= 3 days of data
+    
     -- Command
     command TEXT,
     
@@ -44,6 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_recommendations_namespace ON recommendations(name
 CREATE INDEX IF NOT EXISTS idx_recommendations_cluster ON recommendations(cluster_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_recommendations_type ON recommendations(type);
 CREATE INDEX IF NOT EXISTS idx_recommendations_created_at ON recommendations(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_recommendations_confidence ON recommendations(confidence); -- Week 9: For confidence filtering
 
 -- Audit log table
 CREATE TABLE IF NOT EXISTS audit_log (

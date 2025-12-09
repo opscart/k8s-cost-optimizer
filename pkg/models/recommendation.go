@@ -32,6 +32,12 @@ type Recommendation struct {
 	Impact         string // HIGH, MEDIUM, LOW
 	Risk           RiskLevel
 
+	// Week 9 Day 2: Confidence scoring
+	Confidence        string  // HIGH, MEDIUM, LOW
+	DataQuality       float64 // 0.0-1.0
+	PatternInfo       string  // Human-readable pattern description
+	HasSufficientData bool
+
 	// Generated command
 	Command string
 
