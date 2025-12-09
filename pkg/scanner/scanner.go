@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"math"
 	"path/filepath"
 
 	"github.com/opscart/k8s-cost-optimizer/pkg/analyzer"
@@ -385,8 +386,29 @@ func (s *Scanner) generateHistoricalRecommendation(
 
 	// Update pod analyses with historical P95 values AND pattern analysis
 	for i := range pods {
-		pods[i].ActualCPU = int64(cpuPercentiles.P95)
-		pods[i].ActualMemory = int64(memPercentiles.P95)
+		// Week 9 Day 3: Use higher of weekday/weekend P95 for safer recommendations
+		cpuP95 := cpuPercentiles.P95
+		if histMetrics.WeekdayCPUP95 > 0 || histMetrics.WeekendCPUP95 > 0 {
+			// Use the higher value to ensure we handle peak load
+			if histMetrics.WeekdayCPUP95 > histMetrics.WeekendCPUP95 {
+				cpuP95 = histMetrics.WeekdayCPUP95
+			} else {
+				cpuP95 = histMetrics.WeekendCPUP95
+			}
+		}
+
+		memP95 := memPercentiles.P95
+		if histMetrics.WeekdayMemoryP95 > 0 || histMetrics.WeekendMemoryP95 > 0 {
+			// Use the higher value
+			if histMetrics.WeekdayMemoryP95 > histMetrics.WeekendMemoryP95 {
+				memP95 = float64(histMetrics.WeekdayMemoryP95)
+			} else {
+				memP95 = float64(histMetrics.WeekendMemoryP95)
+			}
+		}
+
+		pods[i].ActualCPU = int64(cpuP95)
+		pods[i].ActualMemory = int64(memP95)
 
 		// Add pattern and growth analysis (Week 9)
 		pods[i].CPUPattern = histMetrics.CPUPattern
@@ -402,13 +424,40 @@ func (s *Scanner) generateHistoricalRecommendation(
 
 	if rec != nil {
 		// Update reason to show historical context
-		rec.Reason = fmt.Sprintf("%s (Based on %d-day P95: CPU %.0fm, Memory %.0fMi)",
-			rec.Reason,
+		reasonContext := fmt.Sprintf("Based on %d-day P95: CPU %.0fm, Memory %.0fMi",
 			lookbackDays,
 			cpuPercentiles.P95,
 			memPercentiles.P95/(1024*1024),
 		)
-	}
 
-	return rec
+		// Week 9 Day 3: Show weekday/weekend split if they differ significantly (>20%)
+		if histMetrics.WeekdayCPUP95 > 0 && histMetrics.WeekendCPUP95 > 0 {
+			cpuDiff := math.Abs(histMetrics.WeekdayCPUP95 - histMetrics.WeekendCPUP95)
+			avgCPU := (histMetrics.WeekdayCPUP95 + histMetrics.WeekendCPUP95) / 2
+			if cpuDiff/avgCPU > 0.2 { // >20% difference
+				reasonContext = fmt.Sprintf("%s (Weekday: %.0fm, Weekend: %.0fm)",
+					reasonContext,
+					histMetrics.WeekdayCPUP95,
+					histMetrics.WeekendCPUP95,
+				)
+			}
+		}
+		// Also check memory difference
+		if histMetrics.WeekdayMemoryP95 > 0 && histMetrics.WeekendMemoryP95 > 0 {
+			memDiff := math.Abs(float64(histMetrics.WeekdayMemoryP95) - float64(histMetrics.WeekendMemoryP95))
+			avgMem := float64(histMetrics.WeekdayMemoryP95+histMetrics.WeekendMemoryP95) / 2
+			if memDiff/avgMem > 0.2 { // >20% difference
+				reasonContext = fmt.Sprintf("%s, Memory (Weekday: %dMi, Weekend: %dMi)",
+					reasonContext,
+					histMetrics.WeekdayMemoryP95/(1024*1024),
+					histMetrics.WeekendMemoryP95/(1024*1024),
+				)
+			}
+		}
+
+		rec.Reason = fmt.Sprintf("%s (%s)", rec.Reason, reasonContext)
+
+		return rec
+	}
+	return nil
 }

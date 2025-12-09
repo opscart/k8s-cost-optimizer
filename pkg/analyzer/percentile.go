@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 )
 
 // CalculatePercentiles computes P50, P90, P95, P99, and peak from samples
@@ -32,6 +33,20 @@ func CalculatePercentiles(samples []MetricSample) (*Percentiles, error) {
 	}
 
 	return percentiles, nil
+}
+
+// SplitSamplesByWeekday separates samples into weekday and weekend buckets
+func SplitSamplesByWeekday(samples []MetricSample) (weekday []MetricSample, weekend []MetricSample) {
+	for _, sample := range samples {
+		// time.Weekday: Sunday = 0, Monday = 1, ..., Saturday = 6
+		day := sample.Timestamp.Weekday()
+		if day == time.Saturday || day == time.Sunday {
+			weekend = append(weekend, sample)
+		} else {
+			weekday = append(weekday, sample)
+		}
+	}
+	return weekday, weekend
 }
 
 // calculatePercentile computes the Nth percentile using linear interpolation

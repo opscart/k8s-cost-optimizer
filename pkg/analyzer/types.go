@@ -16,21 +16,25 @@ type HistoricalMetrics struct {
 	// Memory metrics (in bytes)
 	MemorySamples []MetricSample
 
-	// Pattern Analysis (NEW)
+	// Pattern Analysis
 	CPUPattern    UsagePattern
 	MemoryPattern UsagePattern
 
-	// Growth Trends (NEW)
+	// Growth Trends
 	CPUGrowth    GrowthTrend
 	MemoryGrowth GrowthTrend
 
-	// Metadata
-	SampleCount int
-	Resolution  time.Duration // e.g., 5 minutes between samples
+	// Week 9 Day 3: Weekday vs Weekend Analysis
+	WeekdayCPUP95    float64 // P95 for Monday-Friday
+	WeekendCPUP95    float64 // P95 for Saturday-Sunday
+	WeekdayMemoryP95 uint64  // P95 for Monday-Friday
+	WeekendMemoryP95 uint64  // P95 for Saturday-Sunday
 
-	// Confidence Scoring (NEW)
-	DataQuality       float64 // 0.0-1.0, based on sample count and time span
-	HasSufficientData bool    // true if >= 3 days of data
+	// Metadata
+	SampleCount       int
+	Resolution        time.Duration
+	DataQuality       float64
+	HasSufficientData bool
 }
 
 // MetricSample represents a single metric data point

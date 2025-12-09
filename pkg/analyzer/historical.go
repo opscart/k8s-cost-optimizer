@@ -92,6 +92,43 @@ func (h *HistoricalAnalyzer) GetHistoricalMetrics(
 	metrics.DataQuality = calculateDataQuality(len(cpuSamples), endTime.Sub(startTime))
 	metrics.HasSufficientData = len(cpuSamples) >= 864 // ~3 days at 5-min intervals
 
+	// Week 9 Day 3: Split samples by weekday/weekend and calculate separate P95
+	if len(cpuSamples) > 0 {
+		weekdayCPU, weekendCPU := SplitSamplesByWeekday(cpuSamples)
+
+		if len(weekdayCPU) > 0 {
+			weekdayPercentiles, err := CalculatePercentiles(weekdayCPU)
+			if err == nil {
+				metrics.WeekdayCPUP95 = weekdayPercentiles.P95
+			}
+		}
+
+		if len(weekendCPU) > 0 {
+			weekendPercentiles, err := CalculatePercentiles(weekendCPU)
+			if err == nil {
+				metrics.WeekendCPUP95 = weekendPercentiles.P95
+			}
+		}
+	}
+
+	if len(memorySamples) > 0 {
+		weekdayMem, weekendMem := SplitSamplesByWeekday(memorySamples)
+
+		if len(weekdayMem) > 0 {
+			weekdayPercentiles, err := CalculatePercentiles(weekdayMem)
+			if err == nil {
+				metrics.WeekdayMemoryP95 = uint64(weekdayPercentiles.P95)
+			}
+		}
+
+		if len(weekendMem) > 0 {
+			weekendPercentiles, err := CalculatePercentiles(weekendMem)
+			if err == nil {
+				metrics.WeekendMemoryP95 = uint64(weekendPercentiles.P95)
+			}
+		}
+	}
+
 	if h.verbose {
 		fmt.Printf("[DEBUG] Pattern Analysis - CPU: %s (CV: %.2f), Memory: %s (CV: %.2f)\n",
 			metrics.CPUPattern.Type, metrics.CPUPattern.Variation,
@@ -100,6 +137,13 @@ func (h *HistoricalAnalyzer) GetHistoricalMetrics(
 		if metrics.CPUGrowth.IsGrowing {
 			fmt.Printf("[DEBUG] Growth Detected - CPU: %.1f%%/month, Predicted 3mo: %.0fm\n",
 				metrics.CPUGrowth.RatePerMonth, metrics.CPUGrowth.Predicted3Month)
+		}
+		// Week 9 Day 3: Show weekday/weekend split
+		if metrics.WeekdayCPUP95 > 0 || metrics.WeekendCPUP95 > 0 {
+			fmt.Printf("[DEBUG] Weekday/Weekend Split - CPU: Weekday P95: %.0fm, Weekend P95: %.0fm\n",
+				metrics.WeekdayCPUP95, metrics.WeekendCPUP95)
+			fmt.Printf("[DEBUG] Weekday/Weekend Split - Memory: Weekday P95: %dMi, Weekend P95: %dMi\n",
+				metrics.WeekdayMemoryP95/(1024*1024), metrics.WeekendMemoryP95/(1024*1024))
 		}
 	}
 
