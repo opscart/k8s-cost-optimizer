@@ -26,6 +26,41 @@ Production workloads get additional safety buffers:
 ## Features
 
 ### Core Analysis
+
+#### Pattern-Aware Safety Buffers
+Automatically adjusts safety buffers based on workload behavior:
+- **Steady workloads** (CV < 0.2): -10% buffer (predictable usage)
+- **Spiky workloads** (CV 0.5-0.8): +15% buffer (periodic spikes)
+- **Highly-variable** (CV > 0.8): +25% buffer (unpredictable patterns)
+
+#### Growth Prediction
+Uses linear regression to detect and plan for growth:
+- Analyzes 7-day trends to calculate growth rate per month
+- Automatically adds buffer for workloads growing >5%/month
+- Prevents immediate re-sizing by planning for 3-month growth
+- Example: "Growing 206%/month" warning with proactive sizing
+
+#### Confidence Scoring
+Transparent data quality indicators:
+- **HIGH**: 7 days data (2000+ samples) + steady pattern
+- **MEDIUM**: 3+ days data (864+ samples) + acceptable quality
+- **LOW**: Insufficient data (<3 days) or poor quality
+- Visible in CLI: ✓ HIGH, ~ MEDIUM, ? LOW
+
+#### Weekday vs Weekend Analysis
+Separate P95 calculations for business patterns:
+- Monday-Friday vs Saturday-Sunday split
+- Uses **higher** P95 for safety (handles peak load)
+- Shows split when >20% difference detected
+- Example: "Memory (Weekday: 30Mi, Weekend: 22Mi)"
+
+#### Enhanced Reason Strings
+Context-rich explanations for every recommendation:
+- Pattern info: "Pattern: CPU steady (CV: 0.12)"
+- Growth warnings: "⚠️ Growing 50%/month"
+- Data quality: "⚠️ Limited historical data (<3 days)"
+- Utilization details: "CPU utilization: 95%, Memory: 92%"
+
 - **Historical P95/P99 Analysis** - 7-day Prometheus lookback with 1400+ samples per workload
 - **Workload Type Detection** - Automatic classification of Deployments, StatefulSets, DaemonSets
 - **Environment Classification** - Label-based and name-pattern detection (production/staging/development)

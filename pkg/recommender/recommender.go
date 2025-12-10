@@ -176,8 +176,22 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 	cpuUtil := float64(avgActualCPU) / float64(avgRequestedCPU)
 	if cpuUtil < 0.05 {
 		rec.Type = ScaleDown
-		rec.Reason = fmt.Sprintf("Workload appears idle (%.1f%% CPU utilization) - Workload: %s, Environment: %s",
-			cpuUtil*100, workloadType, environment)
+
+		// Build reason with pattern context
+		reasonParts := []string{
+			fmt.Sprintf("Workload appears idle (%.1f%% CPU utilization)", cpuUtil*100),
+		}
+
+		// Add data quality warning if confidence is low
+		if !analyses[0].HasSufficientData {
+			reasonParts = append(reasonParts, "⚠️ Limited historical data (<3 days)")
+		} else if analyses[0].CPUPattern.Type != "" {
+			reasonParts = append(reasonParts, fmt.Sprintf("Pattern: %s", analyses[0].CPUPattern.Type))
+		}
+
+		reasonParts = append(reasonParts, fmt.Sprintf("Workload: %s, Environment: %s", workloadType, environment))
+
+		rec.Reason = strings.Join(reasonParts, " - ")
 		rec.RecommendedCPU = 0
 		rec.RecommendedMemory = 0
 		rec.Impact = "HIGH"
@@ -244,7 +258,7 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 		// Skip if savings negligible
 		if rec.Savings < 1.0 {
 			rec.Type = NoAction
-			rec.Reason = "Savings too small to justify change"
+			rec.Reason = fmt.Sprintf("Savings too small to justify change ($%.2f/month) - Change overhead not worth minimal benefit", rec.Savings)
 			rec.Impact = "NONE"
 			rec.Risk = "NONE"
 			rec.Confidence = confidence
@@ -283,7 +297,17 @@ func (r *Recommender) Analyze(analyses []analyzer.PodAnalysis, deploymentName st
 
 	// No action needed
 	rec.Type = NoAction
-	rec.Reason = "Resource allocation is appropriate"
+	reasonParts := []string{"Resource allocation is appropriate"}
+	cpuUtil = float64(avgActualCPU) / float64(avgRequestedCPU) * 100
+	memUtil := float64(avgActualMem) / float64(avgRequestedMem) * 100
+	reasonParts = append(reasonParts, fmt.Sprintf("CPU utilization: %.0f%%, Memory utilization: %.0f%%", cpuUtil, memUtil))
+
+	// Add pattern info if high confidence
+	if confidence == "HIGH" && analyses[0].CPUPattern.Type != "" {
+		reasonParts = append(reasonParts, fmt.Sprintf("Pattern: %s (consistent)", analyses[0].CPUPattern.Type))
+	}
+
+	rec.Reason = strings.Join(reasonParts, " - ")
 	rec.RecommendedCPU = avgRequestedCPU
 	rec.RecommendedMemory = avgRequestedMem
 	rec.Savings = 0
