@@ -41,6 +41,9 @@ var (
 	generateReport      bool
 	reportFormat        string
 	reportOutput        string
+	prometheusURL       string
+	lookbackDays        int
+	kubeconfigPath      string
 
 	// Global config
 	cfg   *config.Config
@@ -81,6 +84,9 @@ func main() {
 	rootCmd.Flags().BoolVar(&generateReport, "generate-report", false, "Generate cost optimization report")
 	rootCmd.Flags().StringVar(&reportFormat, "report-format", "html", "Report format: html, markdown, csv")
 	rootCmd.Flags().StringVar(&reportOutput, "report-output", "cost-report.html", "Output file for report")
+	rootCmd.Flags().StringVar(&prometheusURL, "prometheus-url", "", "Prometheus URL (default: env PROMETHEUS_URL or http://localhost:9090)")
+	rootCmd.Flags().IntVar(&lookbackDays, "lookback-days", 7, "Days of historical data to analyze")
+	rootCmd.Flags().StringVar(&kubeconfigPath, "kubeconfig", "", "Path to kubeconfig file (default: ~/.kube/config)")
 
 	// History command
 	historyCmd := &cobra.Command{
@@ -241,8 +247,25 @@ func runScan(cmd *cobra.Command, args []string) {
 	var promDS *datasource.PrometheusSource
 	var metricsSource string = "metrics-server (instant)" // Default
 
-	if usePrometheus && cfg.PrometheusURL != "" {
-		promDS, err = datasource.NewPrometheusSource(cfg.PrometheusURL)
+	// Use flags first, then fall back to config
+	finalPrometheusURL := prometheusURL
+	if finalPrometheusURL == "" {
+		finalPrometheusURL = cfg.PrometheusURL
+	}
+	if finalPrometheusURL == "" {
+		finalPrometheusURL = "http://localhost:9090" // Final fallback
+	}
+
+	finalLookbackDays := lookbackDays
+	if finalLookbackDays == 0 {
+		finalLookbackDays = cfg.MetricsLookbackDays
+	}
+	if finalLookbackDays == 0 {
+		finalLookbackDays = 7 // Default
+	}
+
+	if usePrometheus && finalPrometheusURL != "" {
+		promDS, err = datasource.NewPrometheusSource(finalPrometheusURL)
 
 		if err != nil {
 			if outputFormat != "commands" {
@@ -251,11 +274,11 @@ func runScan(cmd *cobra.Command, args []string) {
 			}
 			promDS = nil
 		} else if promDS.IsAvailable(ctx) {
-			metricsSource = fmt.Sprintf("Prometheus P95/P99 (%d days lookback)", cfg.MetricsLookbackDays)
+			metricsSource = fmt.Sprintf("Prometheus P95/P99 (%d days lookback)", finalLookbackDays)
 			if outputFormat != "commands" {
-				fmt.Printf("[INFO] Using Prometheus at %s\n", cfg.PrometheusURL)
+				fmt.Printf("[INFO] Using Prometheus at %s\n", finalPrometheusURL)
 				fmt.Printf("[INFO] Metrics window: %d days, Safety buffer: %.1fx\n",
-					cfg.MetricsLookbackDays, cfg.SafetyBuffer)
+					finalLookbackDays, cfg.SafetyBuffer)
 			}
 		} else {
 			if outputFormat != "commands" {
@@ -263,10 +286,10 @@ func runScan(cmd *cobra.Command, args []string) {
 			}
 			promDS = nil
 		}
-	} else if usePrometheus && cfg.PrometheusURL == "" {
+	} else if usePrometheus && finalPrometheusURL == "" {
 		if outputFormat != "commands" {
 			fmt.Println("[INFO] Prometheus URL not configured, using metrics-server")
-			fmt.Println("[INFO] Set PROMETHEUS_URL environment variable to enable Prometheus")
+			fmt.Println("[INFO] Set --prometheus-url flag or PROMETHEUS_URL environment variable")
 		}
 	}
 
@@ -328,18 +351,17 @@ func runScan(cmd *cobra.Command, args []string) {
 	if promDS != nil {
 		// Use historical analyzer with Prometheus
 		if outputFormat != "commands" {
-			fmt.Printf("[INFO] Using historical analysis (P95 over %d days)\n", cfg.MetricsLookbackDays)
+			fmt.Printf("[INFO] Using historical analysis (P95 over %d days)\n", finalLookbackDays)
 		}
 
 		// Get the Prometheus API client
 		promClient := promDS.GetAPIClient()
-
 		oldRecommendations, err = scan.ScanAndRecommendWithHistory(
 			ctx,
 			namespace,
 			allNamespaces,
 			promClient,
-			cfg.MetricsLookbackDays,
+			finalLookbackDays,
 		)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error scanning with historical data: %v\n", err)
