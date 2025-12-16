@@ -3,7 +3,7 @@ entries:
   k8s-cost-optimizer:
   - apiVersion: v2
     appVersion: latest
-    created: "2025-12-15T21:11:38.707477-05:00"
+    created: "2025-12-15T21:44:24.085182-05:00"
     description: Kubernetes cost optimization tool with historical P95/P99 analysis
     digest: fc72ad5382ab953938a20c1d6ddc8f77c41884510b517e1a9f405562e8653c47
     home: https://github.com/opscart/k8s-cost-optimizer
@@ -23,4 +23,4 @@ entries:
     urls:
     - https://opscart.github.io/k8s-cost-optimizer/helm-charts/k8s-cost-optimizer-0.1.0.tgz
     version: 0.1.0
-generated: "2025-12-15T21:11:38.706952-05:00"
+generated: "2025-12-15T21:44:24.083893-05:00"
