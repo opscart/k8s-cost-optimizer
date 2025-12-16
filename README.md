@@ -427,7 +427,8 @@ See `docs/guides/storage.md` for detailed setup and schema information.
 | **Large Scale** | ❌ Untested | ✓ Production | ✓ | ✓ |
 | **Auth (AKS/EKS)** | ❌ Broken | ✓ Works | ✓ Works | ✓ Works |
 | **Web UI** | ❌ | ✓ | ❌ | ❌ |
-| **Helm Chart** | ❌ | ✓ | ✓ | ✓ |
+| **Helm Chart** | ✓ v0.1.0| ✓ | ✓ | ✓ |
+| **Docker Image** | ✓ Docker Hub | ✓ | ✓ | ✓ |
 
 **When to use this tool:**
 - Learning about cost optimization
