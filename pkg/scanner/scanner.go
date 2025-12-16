@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/api"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
@@ -24,15 +25,25 @@ type Scanner struct {
 	verbose       bool
 }
 
-func New(verbose bool) (*Scanner, error) {
-	var kubeconfig string
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = filepath.Join(home, ".kube", "config")
-	}
+func New(kubeconfigPath string, verbose bool) (*Scanner, error) {
+	var config *rest.Config
+	var err error
 
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	// Try in-cluster config first (for pods running in Kubernetes)
+	config, err = rest.InClusterConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to build config: %w", err)
+		// Fall back to kubeconfig
+		var kubeconfig string
+		if kubeconfigPath != "" {
+			kubeconfig = kubeconfigPath
+		} else if home := homedir.HomeDir(); home != "" {
+			kubeconfig = filepath.Join(home, ".kube", "config")
+		}
+
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build config: %w", err)
+		}
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
@@ -41,9 +52,6 @@ func New(verbose bool) (*Scanner, error) {
 	}
 
 	metricsClient, err := metricsv.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create metrics client: %w", err)
-	}
 
 	return &Scanner{
 		clientset:     clientset,

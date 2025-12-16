@@ -1,0 +1,100 @@
+{{- if eq .Values.mode "cronjob" }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "k8s-cost-optimizer.fullname" . }}
+  labels:
+    {{- include "k8s-cost-optimizer.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy }}
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "k8s-cost-optimizer.selectorLabels" . | nindent 8 }}
+    spec:
+      template:
+        metadata:
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          labels:
+            {{- include "k8s-cost-optimizer.selectorLabels" . | nindent 12 }}
+        spec:
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          serviceAccountName: {{ include "k8s-cost-optimizer.serviceAccountName" . }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          restartPolicy: {{ .Values.cronjob.restartPolicy }}
+          containers:
+          - name: scanner
+            securityContext:
+              {{- toYaml .Values.securityContext | nindent 14 }}
+            image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+            imagePullPolicy: {{ .Values.image.pullPolicy }}
+            env:
+            - name: PROMETHEUS_URL
+              value: {{ .Values.prometheus.url | quote }}
+            - name: CLUSTER_ID
+              value: {{ .Values.cluster.id | quote }}
+            {{- if .Values.postgresql.enabled }}
+            - name: STORAGE_ENABLED
+              value: "true"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.postgresql.existingSecret }}{{ .Values.postgresql.existingSecret }}{{ else }}{{ include "k8s-cost-optimizer.fullname" . }}-postgresql{{ end }}
+                  key: {{ .Values.postgresql.existingSecretKey }}
+            {{- end }}
+            {{- if .Values.cloud.provider }}
+            - name: CLOUD_PROVIDER
+              value: {{ .Values.cloud.provider | quote }}
+            {{- end }}
+            {{- if .Values.cloud.region }}
+            - name: CLOUD_REGION
+              value: {{ .Values.cloud.region | quote }}
+            {{- end }}
+            command:
+            - k8s-cost-optimizer
+            args:
+            {{- if .Values.scan.allNamespaces }}
+            - --all-namespaces
+            {{- else if .Values.scan.namespace }}
+            - -n
+            - {{ .Values.scan.namespace }}
+            {{- end }}
+            {{- if .Values.prometheus.enabled }}
+            - --prometheus-url={{ .Values.prometheus.url }}
+            - --lookback-days={{ .Values.prometheus.lookbackDays }}
+            {{- end }}
+            {{- if .Values.scan.verbose }}
+            - --verbose
+            {{- end }}
+            {{- if .Values.postgresql.enabled }}
+            - --save
+            {{- end }}
+            {{- if .Values.scan.generateReport }}
+            - --generate-report
+            - --report-format={{ .Values.scan.reportFormat }}
+            {{- end }}
+            resources:
+              {{- toYaml .Values.resources | nindent 14 }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

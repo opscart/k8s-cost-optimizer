@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cost-optimizer
+  namespace: cost-optimizer
+  labels:
+    app: cost-optimizer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cost-optimizer
+  template:
+    metadata:
+      labels:
+        app: cost-optimizer
+    spec:
+      serviceAccountName: cost-optimizer
+      containers:
+      - name: cost-optimizer
+        image: shamsk22/k8s-cost-optimizer:latest
+        imagePullPolicy: Always
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "Cost Optimizer Pod Running"
+            echo "Run scans with: kubectl exec -it deployment/cost-optimizer -n cost-optimizer -- k8s-cost-optimizer -n <namespace> --verbose"
+            tail -f /dev/null
+        envFrom:
+          - configMapRef:
+              name: cost-optimizer-config
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi

@@ -1,0 +1,48 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Your release is named {{ .Release.Name }}.
+
+{{- if eq .Values.mode "cronjob" }}
+
+The cost optimizer will run as a CronJob on schedule: {{ .Values.cronjob.schedule }}
+
+To manually trigger a scan:
+  kubectl create job --from=cronjob/{{ include "k8s-cost-optimizer.fullname" . }} manual-scan -n {{ .Release.Namespace }}
+
+To view recent job logs:
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "k8s-cost-optimizer.name" . }} --tail=100
+
+{{- else }}
+
+The cost optimizer is running as a Deployment.
+
+To view logs:
+  kubectl logs -n {{ .Release.Namespace }} deployment/{{ include "k8s-cost-optimizer.fullname" . }}
+
+To run a scan:
+  kubectl exec -it deployment/{{ include "k8s-cost-optimizer.fullname" . }} -n {{ .Release.Namespace }} -- \
+    k8s-cost-optimizer {{ if .Values.scan.allNamespaces }}--all-namespaces{{ else }}-n {{ .Values.scan.namespace }}{{ end }} {{ if .Values.scan.verbose }}-v{{ end }}
+
+{{- end }}
+
+{{- if .Values.prometheus.enabled }}
+
+Prometheus integration: {{ .Values.prometheus.url }}
+Lookback period: {{ .Values.prometheus.lookbackDays }} days
+{{- else }}
+
+⚠️  Prometheus disabled - using instant metrics from metrics-server
+{{- end }}
+
+{{- if .Values.postgresql.enabled }}
+
+PostgreSQL storage: Enabled
+View analytics:
+  kubectl exec -it deployment/{{ include "k8s-cost-optimizer.fullname" . }} -n {{ .Release.Namespace }} -- \
+    k8s-cost-optimizer analytics stats --days 30
+{{- else }}
+
+PostgreSQL storage: Disabled (recommendations not persisted)
+{{- end }}
+
+For more information, visit: https://github.com/opscart/k8s-cost-optimizer

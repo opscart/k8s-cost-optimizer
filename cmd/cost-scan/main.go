@@ -235,7 +235,7 @@ func runScan(cmd *cobra.Command, args []string) {
 	}
 
 	// Initialize scanner with verbose flag
-	scan, err := scanner.New(verbose)
+	scan, err := scanner.New(kubeconfigPath, verbose)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing scanner: %v\n", err)
 		os.Exit(1)

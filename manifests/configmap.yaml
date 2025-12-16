@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cost-optimizer-config
+  namespace: cost-optimizer
+data:
+  CLUSTER_ID: "minikube-local"
+  USE_PROMETHEUS: "false"
+  LOOKBACK_DAYS: "7"
+  OUTPUT_FORMAT: "text"

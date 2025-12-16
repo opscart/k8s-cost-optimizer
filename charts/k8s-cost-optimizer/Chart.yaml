@@ -1,0 +1,18 @@
+apiVersion: v2
+name: k8s-cost-optimizer
+description: Kubernetes cost optimization tool with historical P95/P99 analysis
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - kubernetes
+  - cost-optimization
+  - finops
+  - prometheus
+home: https://github.com/opscart/k8s-cost-optimizer
+sources:
+  - https://github.com/opscart/k8s-cost-optimizer
+maintainers:
+  - name: Shamsher Khan
+    email: opscart@gmail.com
+icon: https://raw.githubusercontent.com/opscart/k8s-cost-optimizer/main/docs/images/icon.png

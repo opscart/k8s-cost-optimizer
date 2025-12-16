@@ -1,0 +1,128 @@
+# Default values for k8s-cost-optimizer
+
+# Image configuration
+image:
+  repository: shamsk22/k8s-cost-optimizer
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Deployment mode: cronjob or deployment
+# cronjob = scheduled scans (recommended)
+# deployment = always-running pod (for testing)
+mode: cronjob
+
+# CronJob configuration (when mode=cronjob)
+cronjob:
+  # Schedule in cron format
+  # Default: Daily at 2 AM
+  schedule: "0 2 * * *"
+  
+  # Number of successful/failed jobs to keep
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  
+  # Prevent concurrent jobs
+  concurrencyPolicy: Forbid
+  
+  # Restart policy
+  restartPolicy: OnFailure
+
+# Deployment configuration (when mode=deployment)
+deployment:
+  replicas: 1
+  
+# Scan configuration
+scan:
+  # Scan all namespaces or specific namespace
+  allNamespaces: true
+  namespace: ""
+  
+  # Verbose logging
+  verbose: false
+  
+  # Generate reports
+  generateReport: false
+  reportFormat: html  # html, csv, markdown
+
+# Prometheus configuration
+prometheus:
+  # Prometheus URL (in-cluster service)
+  # Example: http://prometheus-server.monitoring.svc:9090
+  url: "http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090"
+  
+  # Historical lookback period (days)
+  lookbackDays: 7
+  
+  # Enable Prometheus (true) or fall back to metrics-server (false)
+  enabled: true
+
+# PostgreSQL storage (optional)
+postgresql:
+  enabled: false
+  
+  # Connection URL
+  # Example: postgres://user:password@host:5432/database
+  url: ""
+  
+  # Use existing secret for database URL
+  # If set, postgresql.url is ignored
+  existingSecret: ""
+  existingSecretKey: "database-url"
+
+# Cloud provider configuration
+cloud:
+  provider: ""  # azure, aws, gcp (auto-detect if empty)
+  region: ""    # eastus, us-east-1, etc (auto-detect if empty)
+
+# Cluster identification
+cluster:
+  id: "default"
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC
+rbac:
+  create: true
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+# Container security context
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+
+# Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}

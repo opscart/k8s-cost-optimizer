@@ -3,82 +3,105 @@
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Test Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](https://github.com/opscart/k8s-cost-optimizer)
+[![Docker](https://img.shields.io/badge/docker-shamsk22%2Fk8s--cost--optimizer-blue)](https://hub.docker.com/r/shamsk22/k8s-cost-optimizer)
 
-A production-ready Kubernetes cost optimization tool that uses historical P95/P99 analysis, workload-aware intelligence, and environment-based safety buffers to provide accurate, safe recommendations.
+A Kubernetes cost optimization tool that analyzes historical P95/P99 metrics from Prometheus to generate resource recommendations.
+
+---
+
+## ⚠️ Project Status: Experimental
+
+**NOT production-ready. Use at your own risk.**
+
+**What works:**
+- ✅ Local clusters (Minikube/kind)
+- ✅ Prometheus historical analysis (7-day P95)
+- ✅ Pattern detection and confidence scoring
+- ✅ Docker image and Kubernetes manifests
+- ✅ 94% test coverage
+
+**What doesn't work:**
+- ❌ Real AKS/EKS/GKE clusters (auth issues with kubelogin/IAM)
+- ❌ Large-scale testing (tested <50 pods, not 1000+)
+- ❌ Production validation (no SLO/SLA checks)
+- ❌ Helm chart (manual manifests only)
+
+**This is a side project** for learning. For production use, consider [Kubecost](https://www.kubecost.com/).
+
+---
 
 ## Key Differentiators
 
 ### Historical Trend Analysis
-Unlike tools that use instant snapshots, k8s-cost-optimizer analyzes 7-day P95/P99 trends from Prometheus (1400+ data points per workload) to make informed recommendations based on actual usage patterns.
+Unlike tools using instant snapshots, k8s-cost-optimizer analyzes **7-day P95/P99 trends** from Prometheus (2000+ samples per workload) for informed recommendations.
 
 ### Workload-Aware Optimization
-Different workload types require different safety margins:
-- **Deployments**: 1.5x safety buffer (stateless, can tolerate restarts)
-- **StatefulSets**: 2.0x safety buffer (stateful data, requires extra caution)
-- **DaemonSets**: Optimization disabled (node-critical services)
+Different workload types get different safety margins:
+- **Deployments**: 1.5x buffer (stateless, low risk)
+- **StatefulSets**: 2.0x buffer (stateful, medium risk)
+- **DaemonSets**: Optimization disabled (critical services)
 
 ### Environment-Based Safety
-Production workloads get additional safety buffers:
+Production workloads get extra protection:
 - **Production**: 1.3x additional multiplier (2.6x total for StatefulSets)
-- **Staging**: 1.0x standard multiplier
-- **Development**: 0.85x aggressive optimization (15% more savings)
+- **Staging**: 1.0x standard
+- **Development**: 0.85x aggressive (15% more savings)
+
+---
 
 ## Features
 
 ### Core Analysis
 
 #### Pattern-Aware Safety Buffers
-Automatically adjusts safety buffers based on workload behavior:
-- **Steady workloads** (CV < 0.2): -10% buffer (predictable usage)
-- **Spiky workloads** (CV 0.5-0.8): +15% buffer (periodic spikes)
-- **Highly-variable** (CV > 0.8): +25% buffer (unpredictable patterns)
+Adjusts buffers based on workload behavior:
+- **Steady** (CV < 0.2): -10% buffer
+- **Spiky** (CV 0.5-0.8): +15% buffer  
+- **Highly-variable** (CV > 0.8): +25% buffer
 
 #### Growth Prediction
-Uses linear regression to detect and plan for growth:
-- Analyzes 7-day trends to calculate growth rate per month
-- Automatically adds buffer for workloads growing >5%/month
-- Prevents immediate re-sizing by planning for 3-month growth
-- Example: "Growing 206%/month" warning with proactive sizing
+Linear regression to detect growth:
+- Analyzes 7-day trends for growth rate
+- **Note:** 7 days is too short for reliable long-term predictions
+- Adds buffer for workloads growing >5%/month
+- Plans for 3-month future usage
 
 #### Confidence Scoring
-Transparent data quality indicators:
-- **HIGH**: 7 days data (2000+ samples) + steady pattern
-- **MEDIUM**: 3+ days data (864+ samples) + acceptable quality
-- **LOW**: Insufficient data (<3 days) or poor quality
-- Visible in CLI: ✓ HIGH, ~ MEDIUM, ? LOW
+Transparent data quality:
+- **HIGH** ✓: 7 days data + steady pattern
+- **MEDIUM** ~: 3+ days data + acceptable quality
+- **LOW** ?: Insufficient data (<3 days)
 
 #### Weekday vs Weekend Analysis
-Separate P95 calculations for business patterns:
+Separate P95 for business patterns:
 - Monday-Friday vs Saturday-Sunday split
-- Uses **higher** P95 for safety (handles peak load)
-- Shows split when >20% difference detected
+- Uses higher P95 for safety
+- Shows when >20% difference detected
 - Example: "Memory (Weekday: 30Mi, Weekend: 22Mi)"
 
 #### Enhanced Reason Strings
-Context-rich explanations for every recommendation:
+Context-rich explanations:
 - Pattern info: "Pattern: CPU steady (CV: 0.12)"
 - Growth warnings: "⚠️ Growing 50%/month"
-- Data quality: "⚠️ Limited historical data (<3 days)"
-- Utilization details: "CPU utilization: 95%, Memory: 92%"
+- Data quality: "⚠️ Limited historical data"
+- Utilization: "CPU: 95%, Memory: 92%"
 
-- **Historical P95/P99 Analysis** - 7-day Prometheus lookback with 1400+ samples per workload
-- **Workload Type Detection** - Automatic classification of Deployments, StatefulSets, DaemonSets
-- **Environment Classification** - Label-based and name-pattern detection (production/staging/development)
-- **HPA Detection** - Automatically skips auto-scaling workloads
-- **Multi-Cloud Pricing** - Azure, AWS/GCP (static estimates)
-- **Graceful Fallback** - Uses instant metrics when historical data unavailable
+### Additional Features
+
+- **Historical P95/P99 Analysis** - 7-day Prometheus lookback
+- **Workload Type Detection** - Automatic classification
+- **Environment Classification** - Label and name-pattern detection
+- **HPA Detection** - Auto-skips auto-scaling workloads
+- **Multi-Cloud Pricing** - Azure, AWS/GCP (estimates)
+- **Graceful Fallback** - Uses instant metrics when Prometheus unavailable
 
 ### Reporting
-- **HTML Executive Reports** - CNCF-themed dashboards with environment breakdown
-- **CSV Exports** - Finance-friendly format for spreadsheet analysis
-- **Markdown Reports** - GitHub/wiki compatible documentation
-- **Top Savings Analysis** - Ranked opportunities by potential savings
+- **HTML Executive Reports** - CNCF-themed dashboards
+- **CSV Exports** - Finance-friendly spreadsheets
+- **Markdown Reports** - GitHub/wiki compatible
+- **Top Savings Analysis** - Ranked opportunities
 
-### Production Features
-- **Verbose Mode** - Debug logging with `-v` flag
-- **Clean Output** - Production-ready formatting
-- **Timestamped Reports** - Automatic file organization in `reports/` directory
-- **Sample Count Tracking** - Data quality indicators for recommendations
+---
 
 ## Quick Start
 
@@ -87,8 +110,8 @@ Context-rich explanations for every recommendation:
 - Kubernetes cluster (1.19+)
 - kubectl configured
 - Go 1.21+ (for building from source)
-- Prometheus (recommended for historical analysis) OR metrics-server (fallback)
-- PostgreSQL (optional - for analytics and trend tracking)
+- Prometheus with 7+ days retention (recommended)
+- PostgreSQL (optional - for analytics)
 
 ### Installation
 ```bash
@@ -97,10 +120,10 @@ git clone https://github.com/opscart/k8s-cost-optimizer.git
 cd k8s-cost-optimizer
 
 # Build
-go build -o bin/k8s-cost-optimizer cmd/cost-scan/main.go
+go build -o bin/k8s-cost-optimizer ./cmd/cost-scan
 
 # Run scan
-./bin/k8s-cost-optimizer -n production
+./bin/k8s-cost-optimizer -n production --prometheus-url http://localhost:9090
 ```
 
 ### Sample Output
@@ -110,85 +133,27 @@ go build -o bin/k8s-cost-optimizer cmd/cost-scan/main.go
 [INFO] Connected to cluster (version: v1.31.0)
 [INFO] Scanning namespace: production
 [INFO] Using historical analysis (P95 over 7 days)
-[INFO] Using 7-day historical analysis for production/api-server (1409 CPU samples, 1410 memory samples)
 
 === Optimization Recommendations ===
 
 1. production/api-server [PRODUCTION]
    Type: RIGHT_SIZE
-   Reason: CPU over-provisioned by 65% - Workload: Deployment, Environment: production 
+   Confidence: ✓ HIGH (CPU: steady)
+   Reason: Over-provisioned: CPU 65% under-utilized | 
+           Pattern: CPU steady (CV: 0.12) | 
+           Workload: Deployment, Safety: 2.0x, Env: production
            (Based on 7-day P95: CPU 350m, Memory 512Mi)
-   Current: CPU=1000m Memory=2048Mi
-   Recommended: CPU=682m Memory=998Mi
-   Savings: $27.19/month
+   Current:  CPU=1000m Memory=2048Mi
+   Recommended: CPU=700m Memory=1024Mi
+   Savings: $42.50/month
    Risk: LOW
    Command: kubectl set resources deployment api-server -n production \
-     --requests=cpu=682m,memory=998Mi
-
-2. production/postgres [PRODUCTION]
-   Type: NO_ACTION
-   Reason: Workload appears well-sized - Workload: StatefulSet, Environment: production 
-           (Based on 7-day P95: CPU 180m, Memory 768Mi)
-   Current: CPU=500m Memory=2048Mi
-   Recommended: CPU=468m Memory=1997Mi
-   Risk: MEDIUM
+            --requests=cpu=700m,memory=1024Mi
 
 Total potential savings: $152.45/month
 ```
 
-## Usage
-
-### Basic Scan
-```bash
-# Scan single namespace
-./bin/k8s-cost-optimizer -n production
-
-# Scan all namespaces
-./bin/k8s-cost-optimizer --all-namespaces
-
-# Verbose mode (debug output)
-./bin/k8s-cost-optimizer -n production -v
-```
-
-### Report Generation
-```bash
-# Generate HTML report
-./bin/k8s-cost-optimizer -n production --generate-report
-
-# Generate CSV report
-./bin/k8s-cost-optimizer -n production --generate-report --report-format csv --report-output costs.csv
-
-# Generate Markdown report
-./bin/k8s-cost-optimizer -n production --generate-report --report-format markdown
-
-# Custom output location
-./bin/k8s-cost-optimizer -n production --generate-report --report-output /path/to/report.html
-```
-
-Reports are automatically organized in `reports/` directory with timestamps:
-```
-reports/
-├── cost-report-production-20251201-143022.html
-├── cost-report-production-20251201-143022.csv
-└── cost-report-production-20251201-143022.md
-```
-
-### Advanced Options
-```bash
-# Configure analysis parameters
-export METRICS_LOOKBACK_DAYS=7        # Historical lookback period
-export SAFETY_BUFFER=1.5              # Base safety multiplier
-export PROMETHEUS_URL=http://prometheus:9090
-
-./bin/k8s-cost-optimizer -n production
-
-# Specify Prometheus URL directly
-./bin/k8s-cost-optimizer -n production --prometheus-url http://prometheus:9090
-
-# Set custom lookback period
-export METRICS_LOOKBACK_DAYS=14
-./bin/k8s-cost-optimizer -n production
-```
+---
 
 ## Architecture
 ```
@@ -202,9 +167,9 @@ export METRICS_LOOKBACK_DAYS=14
 │  │ - Multi-    │         │ - Historical │                    │
 │  │   workload  │         │   Analysis   │                    │
 │  │ - HPA       │         │ - P95/P99    │                    │
-│  │   detection │         │ - Percentiles│                    │
-│  └─────────────┘         └──────────────┘                    │
-│         │                        │                           │
+│  │   detection │         │ - Patterns   │                    │
+│  └─────────────┘         │ - Growth     │                    │
+│         │                └──────────────┘                    │
 │         │                        │                           │
 │         v                        v                           │
 │  ┌─────────────┐         ┌──────────────┐                    │
@@ -213,7 +178,7 @@ export METRICS_LOOKBACK_DAYS=14
 │  │             │         │              │                    │
 │  │  - Nodes    │         │ ┌──────────┐ │                    │
 │  │  - Pods     │         │ │Prometheus│ │ <- 7-day P95/P99  │
-│  │  - Deploys  │         │ │  (1400+  │ │    historical     │
+│  │  - Deploys  │         │ │  (2000+  │ │    historical     │
 │  │  - StatefulS│         │ │ samples) │ │    analysis       │
 │  │  - DaemonSet│         │ └──────────┘ │                    │
 │  │  - HPAs     │         │ ┌──────────┐ │                    │
@@ -221,7 +186,6 @@ export METRICS_LOOKBACK_DAYS=14
 │         │                │ │  server  │ │    fallback       │
 │         │                │ └──────────┘ │                    │
 │         │                └──────────────┘                    │
-│         │                        │                           │
 │         └────────┬───────────────┘                           │
 │                  v                                           │
 │          ┌──────────────┐                                    │
@@ -229,8 +193,11 @@ export METRICS_LOOKBACK_DAYS=14
 │          │              │                                    │
 │          │ - Workload   │                                    │
 │          │   awareness  │                                    │
-│          │ - Environment│                                    │
-│          │   safety     │                                    │
+│          │ - Pattern    │                                    │
+│          │   buffers    │                                    │
+│          │ - Growth     │                                    │
+│          │   prediction │                                    │
+│          │ - Confidence │                                    │
 │          └──────────────┘                                    │
 │                  │                                           │
 │          ┌───────┴────────┐                                  │
@@ -246,411 +213,344 @@ export METRICS_LOOKBACK_DAYS=14
 └──────────────────────────────────────────────────────────────┘
 ```
 
+---
+
 ## How It Works
 
 ### 1. Historical Analysis
 ```
 For each workload:
-1. Query Prometheus for 7-day metrics (5-minute intervals)
-2. Collect 1400+ CPU and memory samples
+1. Query Prometheus for 7 days (5-minute intervals)
+2. Collect ~2000 CPU and memory samples
 3. Calculate P50, P90, P95, P99 percentiles
-4. Convert counter to rate for accurate CPU usage
-5. Use P95 as baseline for recommendations
+4. Analyze patterns (coefficient of variation)
+5. Detect growth trends (linear regression)
+6. Split weekday/weekend if significant difference
+7. Calculate confidence score
+8. Use P95 as baseline for recommendations
 ```
 
-### 2. Workload-Aware Safety Buffers
+### 2. Safety Buffer Calculation
 ```
-Base safety buffer by workload type:
-- Deployment:  1.5x (stateless, low risk)
-- StatefulSet: 2.0x (stateful data, medium risk)
-- DaemonSet:   Optimization disabled (critical services)
-- Job/CronJob: 1.2x (batch workloads, low risk)
-```
+Base Buffer = Workload Type × Environment
+Pattern Adjustment = Based on CV (±10-25%)
+Growth Buffer = 50% of 3-month prediction
+Final = Constrained between 1.2x and 3.0x
 
-### 3. Environment-Based Multipliers
-```
-Additional safety based on environment:
-- Production:  1.3x extra (conservative)
-- Staging:     1.0x standard
-- Development: 0.85x aggressive (15% more savings)
-
-Example: StatefulSet in production = 2.0 × 1.3 = 2.6x total buffer
+Example (StatefulSet in Production, Spiky pattern, 10% growth):
+  Base: 2.0 (StatefulSet) × 1.3 (Production) = 2.6x
+  Pattern: 2.6 × 1.15 (Spiky) = 2.99x
+  Growth: +50% of predicted 3-month growth
+  Final: Capped at 3.0x maximum
 ```
 
-### 4. Combined Calculation
-```
-Recommended CPU = P95 × workload_buffer × environment_multiplier
-Recommended Memory = P95 × workload_buffer × environment_multiplier
+---
 
-Example for StatefulSet in production:
-P95 CPU: 200m
-Workload buffer: 2.0x
-Environment multiplier: 1.3x
-Recommended: 200m × 2.0 × 1.3 = 520m
-```
+## CLI Usage
 
-## Testing
-
-### Test Coverage: 94%
+### Basic Scanning
 ```bash
-# Unit tests (fast, mocked)
-go test ./... -cover
+# Single namespace
+./bin/k8s-cost-optimizer -n production \
+  --prometheus-url http://localhost:9090
 
-# Integration tests (real APIs)
-go test -tags=integration ./pkg/pricing -v
+# All namespaces
+./bin/k8s-cost-optimizer --all-namespaces \
+  --prometheus-url http://localhost:9090
 
-# E2E tests (real cluster)
-go test -tags=e2e ./tests/e2e -v
+# Verbose mode
+./bin/k8s-cost-optimizer -n production -v
+
+# Custom lookback
+./bin/k8s-cost-optimizer -n production \
+  --lookback-days 14
 ```
 
-## Configuration
+### Report Generation
+```bash
+# HTML report
+./bin/k8s-cost-optimizer -n production \
+  --generate-report
+
+# CSV export
+./bin/k8s-cost-optimizer -n production \
+  --generate-report \
+  --report-format csv
+
+# Markdown
+./bin/k8s-cost-optimizer -n production \
+  --generate-report \
+  --report-format markdown
+```
+
+Reports are saved to `reports/` directory with timestamps.
+
+### CLI Flags
+```
+Scanning:
+  -n, --namespace          Namespace to scan
+  -A, --all-namespaces    Scan all namespaces
+  -v, --verbose           Debug logging
+
+Prometheus:
+  --prometheus-url        Prometheus URL (default: http://localhost:9090)
+  --lookback-days        Historical window (default: 7)
+  --use-prometheus       Enable Prometheus (default: true)
+
+Output:
+  -o, --output           Format: text, json, commands
+  --generate-report      Generate report
+  --report-format        html, csv, markdown
+
+Storage (Optional):
+  --save                 Save to PostgreSQL
+  --cluster-id          Cluster identifier
+
+Provider:
+  --provider            azure, aws, gcp (auto-detect)
+  --region              Cloud region
+```
+
+---
+
+## Deployment to Kubernetes
+
+### Option 1: Manual Deployment (Minikube)
+```bash
+# Create namespace and RBAC
+kubectl apply -f manifests/namespace.yaml
+kubectl apply -f manifests/rbac.yaml
+
+# Deploy as CronJob (runs daily at 2 AM)
+kubectl apply -f manifests/cronjob.yaml
+
+# Manual test
+kubectl create job --from=cronjob/cost-optimizer-scan test-scan -n cost-optimizer
+
+# View logs
+kubectl logs -n cost-optimizer -l job-name=test-scan
+```
+
+### Option 2: Docker (Local Testing)
+```bash
+# Pull image
+docker pull shamsk22/k8s-cost-optimizer:latest
+
+# Run scan
+docker run --rm \
+  -v ~/.kube/config:/kubeconfig \
+  -e KUBECONFIG=/kubeconfig \
+  -e PROMETHEUS_URL=http://host.docker.internal:9090 \
+  shamsk22/k8s-cost-optimizer:latest \
+  -n production -v
+```
+
+---
 
 ## PostgreSQL Storage & Analytics (Optional)
 
-### Overview
-
-By default, the tool runs in-memory scans with no persistence. Enable PostgreSQL storage to:
-- Track recommendations over time
-- Analyze cost trends and patterns
-- Compare period-over-period performance
-- Monitor workload optimization history
-- Generate adoption rate analytics
-
-### Setup PostgreSQL
-
-**Start PostgreSQL with Docker:**
+### Setup
 ```bash
-# Start PostgreSQL container with persistent storage
-docker run --name cost-optimizer-db \
+# Start PostgreSQL
+docker run -d --name cost-optimizer-db \
   -e POSTGRES_PASSWORD=costpass \
-  -e POSTGRES_USER=postgres \
   -e POSTGRES_DB=costdb \
   -p 5432:5432 \
-  -v pgdata-cost-optimizer:/var/lib/postgresql/data \
-  -d postgres:14
+  postgres:14
 
-# Verify it's running
-docker ps | grep cost-optimizer-db
-
-# Test connection
-docker exec -it cost-optimizer-db psql -U postgres -d costdb -c "SELECT version();"
-```
-
-**Configure Environment:**
-```bash
-# Set database connection
+# Configure
 export DATABASE_URL="postgres://postgres:costpass@localhost:5432/costdb?sslmode=disable"
-export STORAGE_ENABLED=true
-```
 
-**Note:** The database schema is automatically created on first run. Tables include:
-- `recommendations` - Recommendation history
-- `audit_log` - Action tracking
-- `metrics_cache` - Performance optimization
-- `clusters` - Cluster metadata
-
-### Saving Recommendations
-```bash
-# Run scan and save to database
+# Run with save
 ./bin/k8s-cost-optimizer -n production --save
-
-# Output includes:
-# [INFO] Results will be saved to database
-# [INFO] Saved recommendation for production/api-server (ID: xxx-xxx-xxx)
 ```
-
-**Important:** Data is saved as **snapshots** when you run scans with `--save` flag. This is not continuous sync - you must run scans manually or on a schedule.
 
 ### Analytics Commands
-
-Once you have historical data, use analytics commands to gain insights:
-
-#### Dashboard Statistics
 ```bash
+# Dashboard stats
 ./bin/k8s-cost-optimizer analytics stats -n production --days 30
-```
 
-**Output:**
-```
-=== Cost Optimization Statistics ===
-
-Namespace: production
-Period: Last 30 days
-
-Recommendations:
-  Total: 45
-  Applied: 12
-  Adoption Rate: 26.7%
-
-Savings:
-  Potential: $2,450.00/month
-  Realized: $650.00/month
-  Average per Recommendation: $54.44/month
-
-Workloads:
-  Unique Workloads: 23
-```
-
-#### Savings Trends
-```bash
+# Savings trends
 ./bin/k8s-cost-optimizer analytics trends -n production --days 30
-```
 
-**Output:**
-```
-=== Savings Trends ===
-
-Date         | Recommendations | Potential Savings  | Applied    | Realized Savings  
-------------------------------------------------------------------------------------------
-2025-12-03   | 15              | $825.00            | 4          | $220.00
-2025-12-02   | 14              | $780.00            | 3          | $180.00
-2025-12-01   | 16              | $845.00            | 5          | $250.00
-
---- Summary ---
-Total Potential Savings: $2,450.00/month
-Overall Adoption Rate: 26.7%
-```
-
-#### Period Comparison
-```bash
+# Period comparison
 ./bin/k8s-cost-optimizer analytics compare -n production --days 30
+
+# Workload history
+./bin/k8s-cost-optimizer analytics workload -n production --deployment api-server
 ```
 
-**Output:**
-```
-=== Period Comparison ===
+See `docs/guides/storage.md` for detailed setup and schema information.
 
-Metric               | Current         | Previous        | Change    
-----------------------------------------------------------------------
-Recommendations      | 45              | 38              | +18.4%
-Potential Savings    | $2,450.00       | $2,100.00       | +16.7%
+---
 
---- Interpretation ---
-⚠️  Recommendations increased by 18.4% - More optimization opportunities detected
-```
+## Known Limitations
 
-#### Workload History
-```bash
-./bin/k8s-cost-optimizer analytics workload -n production --deployment api-server --limit 10
-```
+### Data & Analysis
+- **7 days too short**: Can't detect monthly/seasonal patterns
+- **5-min intervals**: Misses sub-minute spikes
+- **No OOM detection**: Doesn't check for memory kills
+- **No throttling**: Doesn't check CPU throttling
+- **Arbitrary thresholds**: Safety buffers not validated
 
-**Output:**
-```
-=== Workload History ===
+### Safety
+- **No SLO validation**: Can't verify against your objectives
+- **No rollback tracking**: Doesn't detect reverted changes
+- **Static learning**: Doesn't adapt over time
+- **No alerting integration**: Can't check error rates
 
-1. 2025-12-03 14:30:00
-   Type: RIGHT_SIZE
-   Current: CPU=1000m Memory=2048Mi
-   Recommended: CPU=450m Memory=896Mi
-   Savings: $42.50/month
-   Risk: LOW
+### Scale & Production
+- **Untested at scale**: Performance unknown with 500+ pods
+- **Auth issues**: AKS/EKS/GKE with IAM not working
+- **No multi-cluster**: Single cluster only
+- **No Helm chart**: Manual manifest deployment
 
-2. 2025-12-02 14:30:00
-   Type: RIGHT_SIZE
-   Current: CPU=1000m Memory=2048Mi
-   Recommended: CPU=480m Memory=920Mi
-   Savings: $40.20/month
-   Risk: LOW
-   ✅ Applied: 2025-12-02 18:45:00 by devops-team
+### Missing Features
+- No Slack/Teams notifications
+- No web dashboard
+- No GitOps integration
+- No approval workflow
 
---- Trend ---
-✅ Workload improving ($2.30 decrease in potential savings)
-```
-
-### Scheduled Scans (Recommended)
-
-For continuous tracking, run scans on a schedule:
-
-**Option 1: Cron (Local Mac/Linux)**
-```bash
-# Edit crontab
-crontab -e
-
-# Add daily scan at 2 AM
-0 2 * * * cd /path/to/k8s-cost-optimizer && \
-  export DATABASE_URL="postgres://postgres:costpass@localhost:5432/costdb?sslmode=disable" && \
-  export STORAGE_ENABLED=true && \
-  ./bin/k8s-cost-optimizer -n production --save >> /tmp/cost-scan.log 2>&1
-```
-
-**Option 2: Kubernetes CronJob (Recommended for Production)**
-```yaml
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: cost-optimizer-scan
-  namespace: monitoring
-spec:
-  schedule: "0 2 * * *"  # Daily at 2 AM
-  jobTemplate:
-    spec:
-      template:
-        spec:
-          containers:
-          - name: scanner
-            image: your-registry/k8s-cost-optimizer:latest
-            env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: cost-optimizer-db
-                  key: url
-            - name: STORAGE_ENABLED
-              value: "true"
-            - name: PROMETHEUS_URL
-              value: "http://prometheus-server:9090"
-            command: 
-            - ./k8s-cost-optimizer
-            - -n
-            - production
-            - --save
-          restartPolicy: OnFailure
-```
-
-### Data Persistence
-
-**PostgreSQL data survives:**
-- ✅ Mac/server restarts
-- ✅ Docker restarts
-- ✅ Minikube restarts
-- ✅ Prometheus data loss
-
-**PostgreSQL data is lost if:**
-- ❌ You delete the Docker container AND volume
-- ❌ You run `docker volume rm pgdata-cost-optimizer`
-
-**Backup recommendations:**
-```bash
-# Backup database
-docker exec cost-optimizer-db pg_dump -U postgres costdb > backup.sql
-
-# Restore database
-docker exec -i cost-optimizer-db psql -U postgres costdb < backup.sql
-```
-
-### Verify Data
-```bash
-# Connect to database
-docker exec -it cost-optimizer-db psql -U postgres -d costdb
-
-# Check recommendations count
-SELECT COUNT(*) FROM recommendations;
-
-# View recent recommendations
-SELECT namespace, deployment, savings_monthly_usd, created_at 
-FROM recommendations 
-ORDER BY created_at DESC 
-LIMIT 10;
-
-# Exit
-\q
-```
-
-### Environment Variables
-```bash
-# Historical analysis lookback period
-METRICS_LOOKBACK_DAYS=7    # Options: 1-30 days
-
-# Base safety buffer multiplier
-SAFETY_BUFFER=1.5          # Options: 1.0-3.0
-
-# Prometheus URL
-PROMETHEUS_URL=http://localhost:9090
-
-# Cluster identification
-CLUSTER_ID=production-cluster
-
-# Storage (optional, for future premium features)
-STORAGE_ENABLED=false
-DATABASE_URL=postgres://user:pass@localhost/costdb
-```
-
-### Setup Local Environment
-
-The project includes comprehensive setup scripts:
-```bash
-# 1. Create local Minikube cluster with Prometheus
-./scripts/setup/setup-local-env.sh
-
-# 2. Deploy basic test workloads
-./scripts/setup/deploy-test-workloads.sh
-
-# 3. Deploy advanced workloads (StatefulSets, DaemonSets, HPAs)
-./scripts/setup/deploy-advanced-workloads.sh
-
-# 4. Deploy multi-environment workloads (prod/staging/dev namespaces)
-./scripts/setup/deploy-multi-env-workloads.sh
-
-# 5. Port-forward Prometheus for local testing
-kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090
-```
-
-## Project Structure
-```
-k8s-cost-optimizer/
-├── cmd/
-│   └── cost-scan/              # Main CLI application
-├── pkg/
-│   ├── analyzer/
-│   │   ├── analyzer.go         # Pod analysis orchestration
-│   │   ├── historical.go       # Prometheus historical queries
-│   │   ├── percentile.go       # P95/P99 calculations
-│   │   ├── workload_config.go  # Workload-specific settings
-│   │   └── namespace_classifier.go  # Environment detection
-│   ├── scanner/
-│   │   └── scanner.go          # Multi-workload type scanning
-│   ├── recommender/
-│   │   └── recommender.go      # Optimization logic
-│   ├── reporter/
-│   │   ├── reporter.go         # Report orchestration
-│   │   ├── html.go             # HTML report generation
-│   │   ├── csv.go              # CSV export
-│   │   └── markdown.go         # Markdown reports
-│   ├── pricing/                # Multi-cloud pricing
-│   ├── datasource/             # Prometheus integration
-│   ├── storage/                # PostgreSQL (future premium)
-│   └── models/                 # Data structures
-├── scripts/
-│   └── setup/                  # Environment setup scripts
-├── reports/                    # Generated reports (gitignored)
-├── tests/
-│   └── e2e/                    # End-to-end tests
-└── docs/
-    ├── WEEK1_SUMMARY.md        # Development logs
-    ├── WEEK2_SUMMARY.md
-    └── WEEK3_SUMMARY.md
-```
-
-## Cloud Pricing
-
-### Supported Providers
-
-| Provider | Status | Implementation |
-|----------|--------|----------------|
-| Azure    | Production | Real-time Azure Retail Prices API |
-| AWS      | Beta | Static defaults (API integration planned) |
-| GCP      | Beta | Static defaults (API integration planned) |
-| Default  | Production | Conservative industry estimates |
+---
 
 ## Comparison with Other Tools
 
 | Feature | k8s-cost-optimizer | Kubecost | Goldilocks | KRR |
 |---------|-------------------|----------|------------|-----|
-| Historical P95/P99 | Yes (7-day, 1400+ samples) | Basic | No | No |
-| Workload-Aware Safety | Yes (per-type buffers) | No | No | No |
-| Environment Classification | Yes (prod/staging/dev) | No | No | No |
-| HPA Detection | Yes (auto-skip) | Yes | Yes | No |
-| Professional Reports | Yes (HTML/CSV/MD) | Yes | No | No |
-| Multi-Cloud Pricing | Yes (Azure/AWS/GCP) | Yes | No | No |
-| Open Source | Yes | Partial | Yes | Yes |
+| **Status** | Experimental | Production | Stable | Stable |
+| **Support** | None | Commercial | Community | Community |
+| **Historical** | 7-day P95 | ✓ Configurable | ❌ VPA | ❌ Instant |
+| **Pattern Detection** | ✓ Experimental | ❌ | ❌ | ❌ |
+| **Growth Prediction** | ✓ Experimental | ❌ | ❌ | ❌ |
+| **Confidence Scoring** | ✓ | ❌ | ❌ | ❌ |
+| **Weekday/Weekend** | ✓ | ❌ | ❌ | ❌ |
+| **Large Scale** | ❌ Untested | ✓ Production | ✓ | ✓ |
+| **Auth (AKS/EKS)** | ❌ Broken | ✓ Works | ✓ Works | ✓ Works |
+| **Web UI** | ❌ | ✓ | ❌ | ❌ |
+| **Helm Chart** | ❌ | ✓ | ✓ | ✓ |
+
+**When to use this tool:**
+- Learning about cost optimization
+- Local/dev cluster experimentation
+- Understanding pattern-based analysis
+
+**When NOT to use:**
+- Production clusters
+- Need for support
+- Large scale (1000+ pods)
+- Enterprise requirements
+
+---
+
+## Development
+
+### Build from Source
+```bash
+git clone https://github.com/opscart/k8s-cost-optimizer
+cd k8s-cost-optimizer
+
+# Build
+go build -o bin/k8s-cost-optimizer ./cmd/cost-scan
+
+# Run tests (94% coverage)
+go test ./... -v
+
+# Test coverage report
+go test ./... -coverprofile=coverage.out
+go tool cover -html=coverage.out
+```
+
+### Docker Build
+```bash
+docker build -t k8s-cost-optimizer:local .
+docker run --rm k8s-cost-optimizer:local --help
+```
+
+### Project Structure
+```
+k8s-cost-optimizer/
+├── cmd/cost-scan/          # CLI application
+├── pkg/
+│   ├── analyzer/           # Metrics & pattern analysis
+│   ├── recommender/        # Recommendation engine
+│   ├── scanner/            # Workload discovery
+│   ├── storage/            # PostgreSQL persistence
+│   ├── pricing/            # Cloud pricing
+│   └── reporter/           # Report generation
+├── manifests/              # Kubernetes YAML
+├── examples/               # Test workloads
+└── docs/                   # Documentation
+```
+
+---
+
+## Configuration
+
+### Environment Variables
+```bash
+# Prometheus
+PROMETHEUS_URL=http://prometheus.monitoring.svc:9090
+
+# Historical Analysis
+METRICS_LOOKBACK_DAYS=7  # 1-30 days
+SAFETY_BUFFER=1.5        # 1.0-3.0
+
+# PostgreSQL (optional)
+DATABASE_URL=postgres://user:pass@host:5432/dbname
+STORAGE_ENABLED=true
+
+# Cloud Provider
+CLOUD_PROVIDER=azure
+CLOUD_REGION=eastus
+
+# Cluster
+CLUSTER_ID=my-cluster
+```
+
+---
+
+## Testing
+
+### Test Coverage: 94%
+```bash
+# Unit tests
+go test ./... -cover
+
+# Integration tests
+go test -tags=integration ./pkg/pricing -v
+
+# E2E tests
+go test -tags=e2e ./tests/e2e -v
+```
+
+---
 
 ## Contributing
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Contributions welcome! This is a learning project.
+
+**How to contribute:**
+1. Open issue first (discuss before coding)
+2. Fork and create feature branch
+3. Add tests (maintain 90%+ coverage)
+4. Update README
+5. Submit PR
+
+**What we need help with:**
+- Testing on real AKS/EKS/GKE
+- Fixing auth issues
+- Helm chart creation
+- Performance optimization
+
+---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License - See [LICENSE](LICENSE)
+
+Use at your own risk. No warranty provided.
+
+---
 
 ## Author
 
@@ -659,36 +559,14 @@ MIT License - see [LICENSE](LICENSE) for details.
 - IEEE Senior Member
 - Technical Writer: DZone, Medium, InfoQ
 
+---
+
 ## Acknowledgments
 
 - Inspired by Kubecost, Goldilocks, and KRR
-- Kubernetes community for excellent client libraries
-- Prometheus for robust metrics infrastructure
-
-## Related Work
-
-- DZone: AI-Assisted Kubernetes Diagnostics series
-- Medium: Kubernetes cost optimization techniques
-- IEEE: LLM comparative analysis for DevOps
-
-## Roadmap
-
-- [x] Historical P95/P99 analysis (7-day Prometheus)
-- [x] Workload-aware optimization (Deployment/StatefulSet/DaemonSet)
-- [x] Environment-based safety buffers (prod/staging/dev)
-- [x] Professional reporting (HTML/CSV/Markdown)
-- [x] HPA detection and auto-skip
-- [x] Multi-cloud pricing (Azure real-time)
-- [x] Verbose debug mode
-- [x] 94% test coverage
-- [ ] Historical trend tracking (premium feature)
-- [ ] Dashboard statistics and analytics
-- [ ] Month-over-month comparison
-- [ ] AWS/GCP real-time pricing APIs
-- [ ] Web dashboard UI
-- [ ] Helm chart deployment
-- [ ] GitHub Actions CI/CD
+- Built for learning and experimentation
+- Not intended for commercial use
 
 ---
 
-For detailed development logs, see docs/WEEK*.md files.
+**Remember:** This is experimental software. For production, use [Kubecost](https://www.kubecost.com/).
