@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cost-optimizer-scan
+  namespace: cost-optimizer
+  labels:
+    app: cost-optimizer
+spec:
+  # Run every day at 2 AM
+  schedule: "0 2 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: cost-optimizer-job
+        spec:
+          serviceAccountName: cost-optimizer
+          restartPolicy: OnFailure
+          containers:
+          - name: scanner
+            image: shamsk22/k8s-cost-optimizer:latest
+            imagePullPolicy: Always
+            env:
+            - name: PROMETHEUS_URL
+              value: "http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090"
+            - name: CLUSTER_ID
+              value: "minikube-local"
+            command: ["/bin/sh", "-c"]
+            args:
+              - |
+                echo "=== K8s Cost Optimizer Scheduled Scan ==="
+                echo "Timestamp: $(date)"
+                echo "Cluster: ${CLUSTER_ID}"
+                echo "Prometheus: ${PROMETHEUS_URL}"
+                echo ""
+                
+                # Scan all namespaces with Prometheus
+                k8s-cost-optimizer \
+                  --all-namespaces \
+                  --prometheus-url=${PROMETHEUS_URL} \
+                  --lookback-days=7 \
+                  --verbose
+                
+                echo ""
+                echo "=== Scan Complete ==="
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
